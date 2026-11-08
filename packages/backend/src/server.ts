@@ -9,6 +9,7 @@ import { registerAgentWebSocket } from './ws/agent.socket.js';
 import { pricingRoutes } from './routes/pricing.routes.js';
 import { documentRoutes } from './routes/documents.routes.js';
 import { orderRoutes } from './routes/orders.routes.js';
+import { paymentRoutes } from './routes/payments.routes.js';
 import { agentRoutes } from './routes/agent.routes.js';
 
 export async function buildServer() {
@@ -63,6 +64,7 @@ export async function buildServer() {
   await server.register(pricingRoutes);
   await server.register(documentRoutes);
   await server.register(orderRoutes);
+  await server.register(paymentRoutes);
   await server.register(agentRoutes);
 
   return server;
