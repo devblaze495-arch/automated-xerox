@@ -1,0 +1,27 @@
+{
+  "name": "campus-print-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Monorepo for Campus Print Platform: Android Operator Companion App & Fastify Backend Service",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "backend:dev": "npm --workspace=packages/backend run dev",
+    "backend:build": "npm --workspace=packages/backend run build",
+    "backend:start": "npm --workspace=packages/backend run start",
+    "prisma:generate": "npm --workspace=packages/backend run prisma:generate",
+    "prisma:push": "npm --workspace=packages/backend run prisma:push",
+    "prisma:studio": "npm --workspace=packages/backend run prisma:studio"
+  },
+  "keywords": [
+    "campus-print",
+    "monorepo",
+    "android",
+    "fastify",
+    "prisma"
+  ],
+  "author": "CampusPrint Engineering Team",
+  "license": "ISC"
+}
+

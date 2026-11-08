@@ -1,0 +1,227 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -------------------------------------------------------------
+// ENUMS
+// -------------------------------------------------------------
+
+enum UserRole {
+  STUDENT
+  OPERATOR
+  ADMIN
+}
+
+enum OrderStatus {
+  UPLOADED
+  CONFIGURED
+  PAYMENT_PENDING
+  PAYMENT_VERIFIED
+  WAITING_FOR_OPERATOR
+  ACCEPTED
+  QUEUED
+  PRINTING
+  COMPLETED
+  READY_FOR_COLLECTION
+  COLLECTED
+  REJECTED
+  CANCELLED
+  PAYMENT_FAILED
+  REFUND_PENDING
+  REFUNDED
+  PRINT_FAILED
+  ON_HOLD
+}
+
+enum PaymentStatus {
+  PENDING
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+enum ConnectionType {
+  USB
+  NETWORK_RAW
+  NETWORK_IPP
+}
+
+enum ColorMode {
+  BW
+  COLOR
+}
+
+enum PaperSize {
+  A4
+  A3
+}
+
+enum DuplexMode {
+  SIMPLEX
+  DUPLEX_LONG
+  DUPLEX_SHORT
+}
+
+// -------------------------------------------------------------
+// MODELS
+// -------------------------------------------------------------
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique
+  phone        String?
+  passwordHash String
+  role         UserRole   @default(STUDENT)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  documents    Document[]
+  orders       Order[]
+
+  @@map("users")
+}
+
+model PrintCenter {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String    @unique
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  orders    Order[]
+  printers  Printer[]
+
+  @@map("print_centers")
+}
+
+model Document {
+  id             String      @id @default(uuid()) @db.Uuid
+  uploaderId     String      @db.Uuid
+  fileName       String
+  s3Key          String
+  fileSizeBytes  Int
+  pageCount      Int
+  fileHashSha256 String
+  purgeAt        DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  uploader       User        @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+  orderItems     OrderItem[]
+
+  @@index([fileHashSha256])
+  @@index([uploaderId])
+  @@map("documents")
+}
+
+model Order {
+  id                  String      @id @default(uuid()) @db.Uuid
+  studentId           String      @db.Uuid
+  centerId            String      @db.Uuid
+  status              OrderStatus @default(PAYMENT_PENDING)
+  collectionOtp       String
+  totalSheets         Int         @default(0)
+  subtotalCents       Int         @default(0)
+  convenienceFeeCents Int         @default(0)
+  totalAmountCents    Int         @default(0)
+  cancellationReason  String?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  student             User        @relation(fields: [studentId], references: [id])
+  center              PrintCenter @relation(fields: [centerId], references: [id])
+  items               OrderItem[]
+  payment             OrderPayment?
+
+  @@index([studentId])
+  @@index([centerId])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id             String     @id @default(uuid()) @db.Uuid
+  orderId        String     @db.Uuid
+  documentId     String     @db.Uuid
+  pageRange      String     @default("ALL")
+  colorMode      ColorMode  @default(BW)
+  paperSize      PaperSize  @default(A4)
+  duplexMode     DuplexMode @default(SIMPLEX)
+  orientation    String     @default("PORTRAIT")
+  copies         Int        @default(1)
+  computedSheets Int
+  itemTotalCents Int
+
+  order          Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  document       Document   @relation(fields: [documentId], references: [id])
+  printJobs      PrintJob[]
+
+  @@index([orderId])
+  @@index([documentId])
+  @@map("order_items")
+}
+
+model OrderPayment {
+  id           String        @id @default(uuid()) @db.Uuid
+  orderId      String        @unique @db.Uuid
+  rzpOrderId   String?
+  rzpPaymentId String?
+  rzpSignature String?
+  amountCents  Int
+  currency     String        @default("INR")
+  status       PaymentStatus @default(PENDING)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  order        Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_payments")
+}
+
+model Printer {
+  id             String         @id @default(uuid()) @db.Uuid
+  centerId       String         @db.Uuid
+  name           String
+  model          String
+  connectionType ConnectionType @default(NETWORK_IPP)
+  portName       String?
+  capabilities   Json           @default("{}")
+  isActive       Boolean        @default(true)
+  isOnline       Boolean        @default(false)
+  lastSeenAt     DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  center         PrintCenter    @relation(fields: [centerId], references: [id], onDelete: Cascade)
+  printJobs      PrintJob[]
+
+  @@index([centerId])
+  @@map("printers")
+}
+
+model PrintJob {
+  id           String    @id @default(uuid()) @db.Uuid
+  orderItemId  String    @db.Uuid
+  printerId    String?   @db.Uuid
+  dispatchedAt DateTime  @default(now())
+  completedAt  DateTime?
+  status       String    @default("DISPATCHED")
+  errorMessage String?
+  retryCount   Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  orderItem    OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  printer      Printer?  @relation(fields: [printerId], references: [id])
+
+  @@index([orderItemId])
+  @@index([printerId])
+  @@map("print_jobs")
+}
+

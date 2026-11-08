@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CampusPrintBridge</string>
+    <string name="channel_name">Print Bridge Service</string>
+    <string name="channel_description">Maintains active real-time connection to the campus print server</string>
+    <string name="notification_title">CampusPrintBridge Operator Terminal</string>
+    <string name="notification_text_connected">Connected to server. Ready for print dispatch.</string>
+    <string name="notification_text_disconnected">Disconnected from server.</string>
+</resources>
+

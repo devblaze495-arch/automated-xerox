@@ -1,0 +1,25 @@
+# Node & Build artifacts
+node_modules/
+dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+
+# Local storage for document uploads
+uploads/*
+!uploads/.gitkeep
+
+# IDEs & OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+

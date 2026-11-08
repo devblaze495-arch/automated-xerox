@@ -1,0 +1,98 @@
+# =============================================================================
+# CampusPrint Platform - Root Monorepo .gitignore
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. Environment Variables & Secret Credentials
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.crt
+*.cert
+*.keystore
+*.jks
+credentials.json
+service-account*.json
+jwt-*.key
+id_rsa*
+
+# -----------------------------------------------------------------------------
+# 2. Node.js & Monorepo Packages
+# -----------------------------------------------------------------------------
+node_modules/
+dist/
+out/
+.next/
+.turbo/
+.cache/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Uploaded/cached local test files
+uploads/*
+!uploads/.gitkeep
+
+# -----------------------------------------------------------------------------
+# 3. Android & Gradle Build Artifacts
+# -----------------------------------------------------------------------------
+.gradle/
+build/
+**/build/
+!build.gradle.kts
+!app/build.gradle.kts
+captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+
+# Android Output Binaries & Bytecode
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+
+# Proguard / Mapping
+mapping.txt
+configuration.txt
+dump.txt
+seeds.txt
+usage.txt
+
+# -----------------------------------------------------------------------------
+# 4. IDEs, Editors & Tooling
+# -----------------------------------------------------------------------------
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.settings/
+
+# -----------------------------------------------------------------------------
+# 5. OS & Temporary Files
+# -----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.swp
+*.swo
+*~
