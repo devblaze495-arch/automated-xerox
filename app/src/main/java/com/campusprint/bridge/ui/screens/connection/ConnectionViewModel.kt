@@ -7,6 +7,7 @@ import com.campusprint.bridge.CampusPrintApp
 import com.campusprint.bridge.data.local.PreferencesRepository
 import com.campusprint.bridge.data.model.ConnectionState
 import com.campusprint.bridge.data.model.DeviceConfig
+import com.campusprint.bridge.data.model.PresetEndpoints
 import com.campusprint.bridge.data.remote.WebSocketManager
 import com.campusprint.bridge.service.PrintBridgeForegroundService
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,7 +17,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 data class ConnectionUiState(
-    val serverUrl: String = "ws://10.0.2.2:4000/api/v1/agent/socket",
+    val serverUrl: String = PresetEndpoints.USB_ADB_REVERSE,
     val centerId: String = "CTR-CAMPUS-01",
     val secretToken: String = "",
     val autoDownload: Boolean = true,

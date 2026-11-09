@@ -10,6 +10,12 @@ export interface DispatchedJobPayload {
   copies: number;
   downloadUrl: string;
   createdAt: number;
+  targetPrinter?: {
+    id: string;
+    name: string;
+    portName: string;
+  };
+  requiresManualFlip?: boolean;
 }
 
 export interface ConnectedAgent {

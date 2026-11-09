@@ -8,7 +8,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "tsx --test src/services/pricing.service.test.ts",
+    "test": "tsx --test src/services/pricing.service.test.ts src/services/printer.service.test.ts src/services/payment.service.test.ts src/services/subscription.service.test.ts",
+    "test:e2e": "tsx src/e2e-simulation.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:push": "prisma db push",
@@ -35,6 +36,7 @@
     "fastify": "^4.27.0",
     "ioredis": "^5.4.1",
     "pdf-lib": "^1.17.1",
+    "razorpay": "^2.9.8",
     "ws": "^8.17.0",
     "zod": "^3.23.8"
   },

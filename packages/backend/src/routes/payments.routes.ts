@@ -1,12 +1,15 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import crypto from 'crypto';
-import { prisma } from '../db/prisma.js';
-import { env } from '../config/env.js';
-import { enqueuePrintDispatch } from '../services/queue.service.js';
+import { paymentService } from '../services/payment.service.js';
+import { orderStore } from '../services/order.store.js';
+
+const createOrderSchema = z.object({
+  orderId: z.string().min(1, 'orderId is required'),
+  amountCents: z.number().int().positive().optional(),
+});
 
 const verifyPaymentSchema = z.object({
-  orderId: z.string().uuid(),
+  orderId: z.string().min(1, 'orderId is required'),
   rzpOrderId: z.string().default('order_mock_123'),
   rzpPaymentId: z.string().default('pay_mock_123'),
   rzpSignature: z.string().optional(),
@@ -14,7 +17,40 @@ const verifyPaymentSchema = z.object({
 
 export const paymentRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   /**
-   * Verify Razorpay Payment and Dispatch Print Order
+   * POST /api/v1/payments/create-order
+   * Initializes a Razorpay order in INR paise and attaches rzpOrderId to the order
+   */
+  app.post('/api/v1/payments/create-order', async (req, reply) => {
+    const parseResult = createOrderSchema.safeParse(req.body);
+
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        error: 'Validation Error',
+        details: parseResult.error.format(),
+      });
+    }
+
+    const { orderId, amountCents } = parseResult.data;
+
+    try {
+      const orderResult = await paymentService.createRazorpayOrder(orderId, amountCents);
+      return reply.send({
+        success: true,
+        ...orderResult,
+        orderId,
+      });
+    } catch (err: any) {
+      return reply.status(500).send({
+        error: 'Order Creation Failed',
+        message: err.message,
+      });
+    }
+  });
+
+  /**
+   * POST /api/v1/payments/verify
+   * Student frontend verification callback after Razorpay checkout
+   * Performs timing-safe HMAC validation, captures payment, and enqueues print jobs
    */
   app.post('/api/v1/payments/verify', async (req, reply) => {
     const parseResult = verifyPaymentSchema.safeParse(req.body);
@@ -28,82 +64,102 @@ export const paymentRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
 
     const { orderId, rzpOrderId, rzpPaymentId, rzpSignature } = parseResult.data;
 
-    // Signature verification (in production with live keys)
-    if (rzpSignature && env.NODE_ENV === 'production') {
-      const generatedSignature = crypto
-        .createHmac('sha256', env.RAZORPAY_KEY_SECRET)
-        .update(`${rzpOrderId}|${rzpPaymentId}`)
-        .digest('hex');
-
-      if (generatedSignature !== rzpSignature) {
-        return reply.status(400).send({ error: 'Invalid payment signature verification' });
-      }
-    }
-
-    try {
-      // 1. Update Payment Record
-      await prisma.orderPayment.updateMany({
-        where: { orderId },
-        data: {
-          rzpOrderId,
-          rzpPaymentId,
-          rzpSignature: rzpSignature || 'mock_verified_signature',
-          status: 'CAPTURED',
-        },
-      });
-
-      // 2. Transition Order Status to PAYMENT_VERIFIED
-      const updatedOrder = await prisma.order.update({
-        where: { id: orderId },
-        data: {
-          status: 'PAYMENT_VERIFIED',
-        },
-        include: {
-          items: {
-            include: { document: true },
-          },
-        },
-      });
-
-      // 3. Dispatch items to the connected Android Operator Terminal via WebSocket
-      for (const item of updatedOrder.items) {
-        const downloadFileName = item.document.s3Key ? item.document.s3Key.split('/').pop() : 'campus_test_document.pdf';
-        const downloadUrl = `${env.PUBLIC_BASE_URL}/api/v1/documents/download/${downloadFileName}`;
-
-        await enqueuePrintDispatch({
-          orderId: updatedOrder.id,
-          orderItemId: item.id,
-          centerId: updatedOrder.centerId,
-          payload: {
-            orderItemId: item.id,
-            documentName: item.document.fileName,
-            totalPages: item.document.pageCount,
-            colorMode: item.colorMode,
-            duplexMode: item.duplexMode,
-            paperSize: item.paperSize,
-            copies: item.copies,
-            downloadUrl,
-            createdAt: Date.now(),
-          },
-        });
-      }
-
-      return reply.send({
-        success: true,
-        message: 'Payment captured and verified. Order queued for dispatch.',
-        orderId: updatedOrder.id,
-        status: 'QUEUED',
-      });
-    } catch (err: any) {
-      console.warn('DB payment update skipped (mock mode):', err.message);
-
-      return reply.send({
-        success: true,
-        message: 'Payment verified (mock mode).',
-        orderId,
-        status: 'QUEUED',
+    // 1. Timing-safe cryptographic HMAC verification
+    const isValid = paymentService.verifyPaymentSignature(rzpOrderId, rzpPaymentId, rzpSignature);
+    if (!isValid) {
+      return reply.status(400).send({
+        error: 'Invalid Payment Signature',
+        message: 'Cryptographic signature verification failed. The transaction may have been tampered with.',
       });
     }
+
+    // 2. Idempotent payment reconciliation & print dispatch
+    const result = await paymentService.reconcilePaymentSuccess({
+      orderId,
+      rzpOrderId,
+      rzpPaymentId,
+      rzpSignature,
+    });
+
+    if (!result.success) {
+      return reply.status(404).send({
+        error: 'Order Not Found',
+        message: `Order ${orderId} does not exist in active records.`,
+      });
+    }
+
+    return reply.send({
+      success: true,
+      message: result.alreadyProcessed
+        ? 'Payment already verified and queued.'
+        : 'Payment verified and print jobs dispatched to operator terminal.',
+      orderId,
+      status: 'QUEUED',
+      alreadyProcessed: result.alreadyProcessed,
+    });
+  });
+
+  /**
+   * POST /api/v1/payments/webhook
+   * Ingress handler for asynchronous Razorpay webhooks (payment.captured, payment.failed)
+   * Validates X-Razorpay-Signature and reconciles order state idempotently
+   */
+  app.post('/api/v1/payments/webhook', async (req, reply) => {
+    const signature = req.headers['x-razorpay-signature'] as string | undefined;
+    const bodyString = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+
+    // Cryptographic webhook HMAC signature verification
+    const isValid = paymentService.verifyWebhookSignature(bodyString, signature);
+    if (!isValid) {
+      return reply.status(400).send({
+        error: 'Invalid Webhook Signature',
+        message: 'X-Razorpay-Signature did not match the configured webhook secret.',
+      });
+    }
+
+    const payload = (req.body || {}) as any;
+    const event = payload.event;
+    const paymentEntity = payload.payload?.payment?.entity;
+
+    if (!paymentEntity) {
+      return reply.send({ success: true, message: 'Unhandled payload entity' });
+    }
+
+    const rzpOrderId = paymentEntity.order_id;
+    const rzpPaymentId = paymentEntity.id;
+
+    // Locate internal orderId from notes or matching orderStore
+    let internalOrderId = paymentEntity.notes?.orderId;
+    if (!internalOrderId && rzpOrderId) {
+      const allOrders = orderStore.getAllOrders();
+      const matched = allOrders.find(
+        (o) => o.payment?.rzpOrderId === rzpOrderId || o.id === rzpOrderId
+      );
+      if (matched) internalOrderId = matched.id;
+    }
+
+    if (!internalOrderId) {
+      return reply.send({
+        success: true,
+        message: 'Order reference not found in webhook notes; acknowledged without state change.',
+      });
+    }
+
+    if (event === 'payment.captured' || event === 'order.paid') {
+      await paymentService.reconcilePaymentSuccess({
+        orderId: internalOrderId,
+        rzpOrderId,
+        rzpPaymentId,
+      });
+      return reply.send({ success: true, event, orderId: internalOrderId, status: 'CAPTURED' });
+    }
+
+    if (event === 'payment.failed') {
+      const reason = paymentEntity.error_description || 'Payment failed via webhook notification';
+      await paymentService.reconcilePaymentFailure(internalOrderId, reason);
+      return reply.send({ success: true, event, orderId: internalOrderId, status: 'FAILED' });
+    }
+
+    return reply.send({ success: true, event, message: 'Event recorded' });
   });
 };
-

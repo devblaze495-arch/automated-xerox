@@ -11,6 +11,8 @@ import { documentRoutes } from './routes/documents.routes.js';
 import { orderRoutes } from './routes/orders.routes.js';
 import { paymentRoutes } from './routes/payments.routes.js';
 import { agentRoutes } from './routes/agent.routes.js';
+import { operatorRoutes } from './routes/operator.routes.js';
+import { subscriptionRoutes } from './routes/subscription.routes.js';
 
 export async function buildServer() {
   const server = Fastify({
@@ -66,6 +68,8 @@ export async function buildServer() {
   await server.register(orderRoutes);
   await server.register(paymentRoutes);
   await server.register(agentRoutes);
+  await server.register(operatorRoutes);
+  await server.register(subscriptionRoutes);
 
   return server;
 }

@@ -42,6 +42,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Attach active Activity instance to PrintBridgeManager
+        // Android's PrintManager strictly requires an Activity context to launch print dialogs
+        (application as CampusPrintApp).container.printBridgeManager.attachActivity(this)
+
         checkNotificationPermission()
 
         setContent {
@@ -102,6 +106,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Re-attach active Activity when resumed to ensure PrintManager always has a valid foreground activity
+        (application as CampusPrintApp).container.printBridgeManager.attachActivity(this)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        (application as CampusPrintApp).container.printBridgeManager.detachActivity(this)
+    }
+
     private fun checkNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val permission = Manifest.permission.POST_NOTIFICATIONS
@@ -111,4 +126,3 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-

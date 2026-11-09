@@ -21,4 +21,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "CampusPrintBridge"
 include(":app")
+include(":student-app")
+project(":student-app").projectDir = file("packages/student-app")
 

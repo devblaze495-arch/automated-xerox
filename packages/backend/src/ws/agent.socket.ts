@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { env } from '../config/env.js';
 import { agentRegistry } from './agent.registry.js';
 import { prisma } from '../db/prisma.js';
+import { orderStore } from '../services/order.store.js';
 
 export async function registerAgentWebSocket(app: FastifyInstance) {
   app.get('/api/v1/agent/socket', { websocket: true }, (socket: WebSocket, req) => {
@@ -80,8 +81,25 @@ export async function registerAgentWebSocket(app: FastifyInstance) {
             const { orderItemId, status, errorMessage } = message;
             console.log(`📋 Job Status Update: OrderItem [${orderItemId}] -> ${status} ${errorMessage ? `(${errorMessage})` : ''}`);
 
+            // Update in-memory order store
             try {
-              // Update PrintJob
+              // Find order containing this orderItemId
+              const allOrders = orderStore.getAllOrders();
+              const matchedOrder = allOrders.find(
+                (o) => o.id === orderItemId || o.items.some((i) => i.id === orderItemId)
+              );
+
+              if (matchedOrder) {
+                const targetStatus = status === 'COMPLETED' ? 'READY_FOR_COLLECTION' : status === 'FAILED' ? 'PRINT_FAILED' : status;
+                orderStore.updateStatus(matchedOrder.id, targetStatus, { reason: errorMessage });
+                console.log(`🔄 OrderStore: Order [${matchedOrder.id}] transitioned to ${targetStatus}`);
+              }
+            } catch (storeErr: any) {
+              console.warn('Order store update skipped:', storeErr.message);
+            }
+
+            try {
+              // Update PrintJob in Prisma
               await prisma.printJob.updateMany({
                 where: { orderItemId },
                 data: {
@@ -91,7 +109,7 @@ export async function registerAgentWebSocket(app: FastifyInstance) {
                 },
               });
 
-              // Update Order status
+              // Update Order status in Prisma
               if (status === 'COMPLETED') {
                 const item = await prisma.orderItem.findUnique({
                   where: { id: orderItemId },
@@ -100,7 +118,7 @@ export async function registerAgentWebSocket(app: FastifyInstance) {
                 if (item) {
                   await prisma.order.update({
                     where: { id: item.orderId },
-                    data: { status: 'COMPLETED' },
+                    data: { status: 'READY_FOR_COLLECTION' },
                   });
                 }
               } else if (status === 'PRINTING') {

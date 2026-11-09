@@ -103,7 +103,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     /**
      * Downloads the PDF file and immediately launches the native Android Print Dialog.
      */
-    fun processAndPrintJob(activity: Activity, job: PrintJob) {
+    fun processAndPrintJob(activity: Activity? = null, job: PrintJob) {
         viewModelScope.launch {
             // Check if file is already downloaded and valid
             if (job.localFilePath != null) {
@@ -160,11 +160,18 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                         updateJob(job.copy(downloadProgress = state.percentage))
                     }
                     is DownloadState.Success -> {
-                        updateJob(job.copy(
+                        val downloadedJob = job.copy(
                             status = PrintJobStatus.READY_TO_PRINT,
                             localFilePath = state.file.absolutePath,
                             downloadProgress = 1.0f
-                        ))
+                        )
+                        updateJob(downloadedJob)
+
+                        // If autoPrint is enabled in config, launch print dialog
+                        val config = repository.loadConfig()
+                        if (config.autoPrint) {
+                            launchSystemPrintDialog(null, downloadedJob, state.file)
+                        }
                     }
                     is DownloadState.Error -> {
                         updateJob(job.copy(
@@ -178,7 +185,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun launchSystemPrintDialog(activity: Activity, job: PrintJob, pdfFile: File) {
+    private fun launchSystemPrintDialog(activity: Activity? = null, job: PrintJob, pdfFile: File) {
         updateJob(job.copy(status = PrintJobStatus.PRINTING))
         wsManager.sendJobStatusUpdate(job.orderItemId, PrintJobStatus.PRINTING)
 

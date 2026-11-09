@@ -67,6 +67,18 @@ enum DuplexMode {
   DUPLEX_SHORT
 }
 
+enum SubscriptionTier {
+  STARTER_INTRO
+  STARTER_RENEWAL
+  ANNUAL
+}
+
+enum SubscriptionStatus {
+  INACTIVE
+  ACTIVE
+  EXPIRED
+}
+
 // -------------------------------------------------------------
 // MODELS
 // -------------------------------------------------------------
@@ -82,6 +94,7 @@ model User {
 
   documents    Document[]
   orders       Order[]
+  subscription Subscription?
 
   @@map("users")
 }
@@ -224,4 +237,39 @@ model PrintJob {
   @@index([printerId])
   @@map("print_jobs")
 }
+
+model Subscription {
+  id                 String             @id @default(uuid()) @db.Uuid
+  userId             String             @unique @db.Uuid
+  tier               SubscriptionTier   @default(STARTER_INTRO)
+  status             SubscriptionStatus @default(INACTIVE)
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  hasUsedIntroPromo  Boolean            @default(false)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payments           SubscriptionPayment[]
+
+  @@map("subscriptions")
+}
+
+model SubscriptionPayment {
+  id             String        @id @default(uuid()) @db.Uuid
+  subscriptionId String        @db.Uuid
+  clientOrderId  String        @unique
+  gatewayOrderId String?
+  amountInr      Int
+  status         PaymentStatus @default(PENDING)
+  utr            String?
+  paidAt         DateTime?
+  createdAt      DateTime      @default(now())
+
+  subscription   Subscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([clientOrderId])
+  @@map("subscription_payments")
+}
+
 

@@ -26,11 +26,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
@@ -69,6 +70,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.campusprint.bridge.data.model.ConnectionState
+import com.campusprint.bridge.data.model.PresetEndpoints
 import com.campusprint.bridge.ui.theme.BrandPrimary
 import com.campusprint.bridge.ui.theme.DarkBackground
 import com.campusprint.bridge.ui.theme.DarkBorder
@@ -172,17 +174,72 @@ fun ConnectionScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 PresetChip(
-                    label = "Android Emulator (10.0.2.2:4000)",
-                    onClick = { viewModel.applyPresetUrl("ws://10.0.2.2:4000/api/v1/agent/socket") }
+                    label = "Physical Phone USB [Default] (127.0.0.1:4000)",
+                    onClick = { viewModel.applyPresetUrl(PresetEndpoints.USB_ADB_REVERSE) }
                 )
                 PresetChip(
-                    label = "Localhost (127.0.0.1:4000)",
-                    onClick = { viewModel.applyPresetUrl("ws://127.0.0.1:4000/api/v1/agent/socket") }
+                    label = "Android Emulator (10.0.2.2:4000)",
+                    onClick = { viewModel.applyPresetUrl(PresetEndpoints.EMULATOR_LOOPBACK) }
                 )
                 PresetChip(
                     label = "Local LAN (192.168.1.100:4000)",
-                    onClick = { viewModel.applyPresetUrl("ws://192.168.1.100:4000/api/v1/agent/socket") }
+                    onClick = { viewModel.applyPresetUrl(PresetEndpoints.LAN_SAMPLE) }
                 )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Physical Device USB ADB Reverse Helper Callout
+            Surface(
+                color = DarkSurfaceElevated,
+                shape = RoundedCornerShape(10.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, BrandPrimary.copy(alpha = 0.35f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = BrandPrimary,
+                        modifier = Modifier
+                            .size(20.dp)
+                            .padding(top = 1.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Physical Device USB Testing",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                color = TextPrimary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "When connecting via USB, route port 4000 traffic from your host computer to the phone by running:",
+                            style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Surface(
+                            color = DarkBackground,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "adb reverse tcp:4000 tcp:4000",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = BrandPrimary,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -388,7 +445,7 @@ fun ConnectionScreen(
             )
             Spacer(modifier = Modifier.weight(1f))
             Icon(
-                imageVector = Icons.Default.ArrowForward,
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                 contentDescription = null,
                 tint = TextSecondary,
                 modifier = Modifier.size(16.dp)

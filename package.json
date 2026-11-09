@@ -10,6 +10,11 @@
     "backend:dev": "npm --workspace=packages/backend run dev",
     "backend:build": "npm --workspace=packages/backend run build",
     "backend:start": "npm --workspace=packages/backend run start",
+    "web:dev": "npm run dev --prefix packages/web",
+    "web:build": "npm run build --prefix packages/web",
+    "agent:dev": "npm run dev --prefix packages/agent-cli",
+    "agent:build": "npm run build --prefix packages/agent-cli",
+    "test:e2e": "npm --workspace=packages/backend run test:e2e",
     "prisma:generate": "npm --workspace=packages/backend run prisma:generate",
     "prisma:push": "npm --workspace=packages/backend run prisma:push",
     "prisma:studio": "npm --workspace=packages/backend run prisma:studio"

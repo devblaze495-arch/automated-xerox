@@ -2,6 +2,7 @@ package com.campusprint.bridge.service
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.os.Build
 import android.print.PrintAttributes
 import android.print.PrintJob
@@ -13,6 +14,7 @@ import com.campusprint.bridge.data.model.PaperSize
 import com.campusprint.bridge.data.model.PrintJob as ModelPrintJob
 import com.campusprint.bridge.util.PdfPrintDocumentAdapter
 import java.io.File
+import java.lang.ref.WeakReference
 
 /**
  * Interface for callbacks from the print bridge.
@@ -24,24 +26,84 @@ interface PrintBridgeCallback {
 }
 
 /**
+ * Extension function unwrapping Context to find the hosting Activity.
+ * Needed because Compose LocalContext or themed contexts can wrap the Activity.
+ */
+tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+/**
  * Service wrapper around Android's native PrintManager and custom PrintDocumentAdapter.
+ *
+ * IMPORTANT:
+ * Android's PrintManager REQUIRES an Activity context when calling print(). Calling print()
+ * on a PrintManager obtained from ApplicationContext throws:
+ * `java.lang.IllegalStateException: Can print only from an activity`
+ *
+ * This class tracks the active Activity via attachActivity()/detachActivity() and resolves
+ * PrintManager strictly from an active Activity instance.
  */
 class PrintBridgeManager(private val context: Context) {
 
-    private val printManager: PrintManager? by lazy {
-        context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+    private var activeActivityRef: WeakReference<Activity>? = null
+
+    /**
+     * Attaches the currently foregrounded Activity to this manager so system print dialogs
+     * can be presented even when triggered from background flows or view models.
+     */
+    fun attachActivity(activity: Activity) {
+        Log.d(TAG, "Attaching active activity: ${activity.javaClass.simpleName}")
+        activeActivityRef = WeakReference(activity)
+    }
+
+    /**
+     * Detaches the Activity when it is destroyed or paused.
+     */
+    fun detachActivity(activity: Activity? = null) {
+        val current = activeActivityRef?.get()
+        if (activity == null || current == activity) {
+            Log.d(TAG, "Detaching activity reference")
+            activeActivityRef?.clear()
+            activeActivityRef = null
+        }
+    }
+
+    /**
+     * Returns the currently attached active Activity, or null if unavailable or finishing.
+     */
+    fun getActiveActivity(): Activity? {
+        val activity = activeActivityRef?.get()
+        return if (activity != null && !activity.isFinishing && !activity.isDestroyedCompat()) {
+            activity
+        } else {
+            null
+        }
+    }
+
+    private fun Activity.isDestroyedCompat(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            isDestroyed
+        } else {
+            false
+        }
     }
 
     /**
      * Dispatches the native Android system print dialog for the given cached PDF file.
+     * Resolves the Activity from the parameter, context unwrapping, or the active attached Activity reference.
      *
-     * @param activity Hosting Activity required to present the system print UI dialog.
+     * @param activity Optional hosting Activity.
+     * @param context Optional Context (unwrapped via findActivity).
      * @param job Job specifications (color, duplex, paper size, copies).
      * @param pdfFile Local cached PDF file.
      * @param callback Callback notifying lifecycle transitions.
      */
     fun printDocument(
-        activity: Activity,
+        activity: Activity? = null,
+        context: Context? = null,
         job: ModelPrintJob,
         pdfFile: File,
         callback: PrintBridgeCallback? = null
@@ -53,7 +115,22 @@ class PrintBridgeManager(private val context: Context) {
             return false
         }
 
-        val manager = printManager ?: (activity.getSystemService(Context.PRINT_SERVICE) as? PrintManager)
+        // Resolve valid Activity instance: parameter -> context unwrap -> attached activity
+        val targetActivity = activity
+            ?: context?.findActivity()
+            ?: getActiveActivity()
+
+        if (targetActivity == null || targetActivity.isFinishing || targetActivity.isDestroyedCompat()) {
+            val err = "Can print only from an activity: No active Activity available to present print dialog"
+            Log.e(TAG, err)
+            callback?.onPrintError(job.orderItemId, err)
+            return false
+        }
+
+        // CRITICAL: Obtain PrintManager directly from the Activity context!
+        // android.print.PrintManager.print() checks `if (!(mContext instanceof Activity))` and throws
+        // IllegalStateException if obtained from ApplicationContext.
+        val manager = targetActivity.getSystemService(Context.PRINT_SERVICE) as? PrintManager
         if (manager == null) {
             val err = "PrintManager system service is unavailable on this device"
             Log.e(TAG, err)
@@ -104,25 +181,33 @@ class PrintBridgeManager(private val context: Context) {
                 }
             )
 
-            // Launch the native system print dialog
-            val nativePrintJob: PrintJob? = manager.print(
-                printJobName,
-                adapter,
-                attributesBuilder.build()
-            )
+            // Launch the native system print dialog from the UI thread of the target activity
+            targetActivity.runOnUiThread {
+                try {
+                    val nativePrintJob: PrintJob? = manager.print(
+                        printJobName,
+                        adapter,
+                        attributesBuilder.build()
+                    )
 
-            if (nativePrintJob != null) {
-                Log.i(TAG, "Print job successfully submitted to spooler: ${nativePrintJob.id}")
-                callback?.onPrintDispatched(job.orderItemId)
-                return true
-            } else {
-                Log.w(TAG, "Print dialog closed or not queued")
-                callback?.onPrintError(job.orderItemId, "Print dialog dismissed")
-                return false
+                    if (nativePrintJob != null) {
+                        Log.i(TAG, "Print job successfully submitted to spooler: ${nativePrintJob.id}")
+                        callback?.onPrintDispatched(job.orderItemId)
+                    } else {
+                        Log.w(TAG, "Print dialog closed or not queued")
+                        callback?.onPrintError(job.orderItemId, "Print dialog dismissed")
+                    }
+                } catch (e: Exception) {
+                    val err = "Exception launching print dialog on UI thread: ${e.message}"
+                    Log.e(TAG, err, e)
+                    callback?.onPrintError(job.orderItemId, err)
+                }
             }
 
+            return true
+
         } catch (e: Exception) {
-            val err = "Exception while launching system print dialog: ${e.message}"
+            val err = "Exception while preparing system print dialog: ${e.message}"
             Log.e(TAG, err, e)
             callback?.onPrintError(job.orderItemId, err)
             return false
@@ -133,4 +218,3 @@ class PrintBridgeManager(private val context: Context) {
         private const val TAG = "PrintBridgeManager"
     }
 }
-

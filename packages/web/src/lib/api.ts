@@ -1,0 +1,425 @@
+import {
+  UploadedDocument,
+  PricingQuote,
+  ColorMode,
+  PaperSize,
+  DuplexMode,
+  OrderRecord,
+  ConnectedAgentInfo,
+  PrinterDevice,
+  EnrichedOperatorOrder,
+  SubscriptionStatusInfo,
+  SubscribeOrderResponse,
+} from './types';
+
+const API_BASE = typeof window !== 'undefined'
+  ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000')
+  : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000');
+
+/**
+ * Uploads a PDF file via multipart/form-data
+ */
+export async function uploadDocument(file: File): Promise<UploadedDocument> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await fetch(`${API_BASE}/api/v1/documents/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errorJson = await res.json().catch(() => ({}));
+    throw new Error(errorJson.message || errorJson.error || `Upload failed with status ${res.status}`);
+  }
+
+  const json = await res.json();
+  return {
+    id: json.data.documentId,
+    fileName: json.data.fileName,
+    pageCount: json.data.pageCount,
+    fileSizeBytes: json.data.fileSizeBytes,
+    sha256Hash: json.data.sha256Hash,
+    downloadUrl: json.data.downloadUrl,
+    createdAt: json.data.createdAt,
+  };
+}
+
+/**
+ * Creates a mock test document on the fly for rapid local testing
+ */
+export async function createMockDocument(): Promise<UploadedDocument> {
+  // Minimal valid PDF content
+  const mockPdfContent = `%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj
+4 0 obj << /Length 120 >> stream
+BT
+/F1 18 Tf
+50 780 Td
+(CampusPrint Sample Lecture Document - 4 Pages) Tj
+ET
+endstream endobj
+5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000244 00000 n 
+0000000415 00000 n 
+trailer << /Size 6 /Root 1 0 R >>
+startxref
+500
+%%EOF`;
+
+  const blob = new Blob([mockPdfContent], { type: 'application/pdf' });
+  const sampleTitles = [
+    'CS201_Data_Structures_Assignment_3.pdf',
+    'Machine_Learning_Lecture_Notes_W5.pdf',
+    'Campus_Research_Paper_Draft_v2.pdf',
+    'Operating_Systems_Lab_Manual.pdf',
+  ];
+  const file = new File([blob], sampleTitles[Math.floor(Math.random() * sampleTitles.length)], {
+    type: 'application/pdf',
+  });
+
+  return uploadDocument(file);
+}
+
+/**
+ * Calculates exact sheet-level pricing quote
+ */
+export async function calculatePricing(params: {
+  pageCount: number;
+  pageRange: string;
+  colorMode: ColorMode;
+  paperSize: PaperSize;
+  duplexMode: DuplexMode;
+  copies: number;
+}): Promise<PricingQuote> {
+  const res = await fetch(`${API_BASE}/api/v1/pricing/calculate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const errorJson = await res.json().catch(() => ({}));
+    throw new Error(errorJson.error || 'Pricing calculation failed');
+  }
+
+  const json = await res.json();
+  return json.data;
+}
+
+/**
+ * Creates an order in PAYMENT_PENDING state
+ */
+export async function createOrder(params: {
+  items: Array<{
+    documentId: string;
+    pageRange: string;
+    colorMode: ColorMode;
+    paperSize: PaperSize;
+    duplexMode: DuplexMode;
+    copies: number;
+    pageCount: number;
+  }>;
+}): Promise<{
+  orderId: string;
+  status: string;
+  collectionOtp: string;
+  totalSheets: number;
+  totalAmountCents: number;
+  items: any[];
+}> {
+  const res = await fetch(`${API_BASE}/api/v1/orders/create`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const errorJson = await res.json().catch(() => ({}));
+    throw new Error(errorJson.error || 'Order creation failed');
+  }
+
+  const json = await res.json();
+  return json.data;
+}
+
+/**
+ * Initiates Razorpay payment order on the backend
+ */
+export async function createRazorpayOrder(orderId: string, amountCents?: number): Promise<{
+  success: boolean;
+  rzpOrderId: string;
+  amount: number;
+  currency: string;
+  keyId: string;
+  orderId: string;
+}> {
+  const res = await fetch(`${API_BASE}/api/v1/payments/create-order`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderId, amountCents }),
+  });
+
+  if (!res.ok) {
+    const errorJson = await res.json().catch(() => ({}));
+    throw new Error(errorJson.message || errorJson.error || 'Failed to initiate payment gateway order');
+  }
+
+  return res.json();
+}
+
+/**
+ * Verifies payment and triggers dispatch to printer
+ */
+export async function verifyPayment(params: {
+  orderId: string;
+  rzpOrderId?: string;
+  rzpPaymentId?: string;
+  rzpSignature?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  orderId: string;
+  status: string;
+}> {
+  const res = await fetch(`${API_BASE}/api/v1/payments/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const errorJson = await res.json().catch(() => ({}));
+    throw new Error(errorJson.error || 'Payment verification failed');
+  }
+
+  return res.json();
+}
+
+/**
+ * Fetches order details with live queue position
+ */
+export async function getOrder(orderId: string): Promise<OrderRecord> {
+  const res = await fetch(`${API_BASE}/api/v1/orders/${orderId}`);
+  if (!res.ok) {
+    throw new Error('Order not found');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+/**
+ * Polls connected operator agents
+ */
+export async function getConnectedAgents(): Promise<{
+  totalConnected: number;
+  agents: ConnectedAgentInfo[];
+}> {
+  const res = await fetch(`${API_BASE}/api/v1/agent/connected`).catch(() => null);
+  if (!res || !res.ok) {
+    return { totalConnected: 0, agents: [] };
+  }
+  return res.json();
+}
+
+/**
+ * Triggers test dispatch to connected agent
+ */
+export async function triggerTestDispatch(centerId?: string): Promise<{
+  success: boolean;
+  message: string;
+  dispatchedPayload?: any;
+}> {
+  const query = centerId ? `?centerId=${encodeURIComponent(centerId)}` : '';
+  const res = await fetch(`${API_BASE}/api/v1/agent/test-dispatch${query}`);
+  return res.json();
+}
+
+// -------------------------------------------------------------
+// OPERATOR & PRINTER API METHODS
+// -------------------------------------------------------------
+
+/**
+ * Fetches all orders for the operator workbench
+ */
+export async function getOperatorOrders(): Promise<EnrichedOperatorOrder[]> {
+  const res = await fetch(`${API_BASE}/api/v1/operator/orders`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch operator orders');
+  }
+  const json = await res.json();
+  return json.data || [];
+}
+
+/**
+ * Accepts and dispatches an order to the assigned/specified printer
+ */
+export async function acceptOperatorOrder(orderId: string, printerId?: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/v1/operator/orders/${orderId}/accept`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ printerId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to accept order');
+  }
+  return res.json();
+}
+
+/**
+ * Marks an order READY_FOR_COLLECTION
+ */
+export async function readyOperatorOrder(orderId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/v1/operator/orders/${orderId}/ready`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to mark order ready');
+  }
+  return res.json();
+}
+
+/**
+ * Validates the student's 4-digit Collection OTP and marks order COLLECTED
+ */
+export async function collectOperatorOrder(orderId: string, collectionOtp: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/v1/operator/orders/${orderId}/collect`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ collectionOtp }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to verify OTP');
+  }
+  return res.json();
+}
+
+/**
+ * Rejects an order and initiates student refund
+ */
+export async function rejectOperatorOrder(orderId: string, reason?: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/v1/operator/orders/${orderId}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to reject order');
+  }
+  return res.json();
+}
+
+/**
+ * Lists all registered printers
+ */
+export async function getPrinters(): Promise<PrinterDevice[]> {
+  const res = await fetch(`${API_BASE}/api/v1/printers`);
+  if (!res.ok) {
+    return [];
+  }
+  const json = await res.json();
+  return json.data || [];
+}
+
+/**
+ * Toggles printer online/offline availability
+ */
+export async function togglePrinter(printerId: string, isOnline?: boolean): Promise<PrinterDevice> {
+  const res = await fetch(`${API_BASE}/api/v1/printers/${printerId}/toggle`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ isOnline }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to toggle printer status');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+// -------------------------------------------------------------
+// SUBSCRIPTION & PAYWALL API METHODS (mynkdev-21/upi-gateway)
+// -------------------------------------------------------------
+
+/**
+ * Fetches current subscription status for a student user
+ */
+export async function getSubscriptionStatus(userId?: string): Promise<SubscriptionStatusInfo> {
+  const query = userId ? `?userId=${encodeURIComponent(userId)}` : '';
+  const res = await fetch(`${API_BASE}/api/v1/subscription/status${query}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error('Failed to fetch subscription status');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+/**
+ * Initiates subscription checkout via self-hosted upi-gateway
+ */
+export async function subscribeToPlan(
+  planType: 'MONTHLY' | 'ANNUAL',
+  userId?: string
+): Promise<SubscribeOrderResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/subscription/subscribe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ planType, userId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || err.error || 'Failed to initiate subscription order');
+  }
+  return res.json();
+}
+
+/**
+ * Simulates UPI Gateway webhook confirmation for zero-friction local sandbox testing
+ */
+export async function simulateSubscriptionWebhook(
+  clientOrderId: string,
+  amount: number,
+  utr?: string
+): Promise<any> {
+  const payload = {
+    event: 'order.paid',
+    data: {
+      client_order_id: clientOrderId,
+      amount,
+      utr: utr || `UTR${Date.now()}`,
+      status: 'paid',
+    },
+  };
+
+  const res = await fetch(`${API_BASE}/api/v1/subscription/webhook`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Signature': 'mock_upi_signature',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || err.error || 'Failed to trigger subscription webhook');
+  }
+
+  return res.json();
+}

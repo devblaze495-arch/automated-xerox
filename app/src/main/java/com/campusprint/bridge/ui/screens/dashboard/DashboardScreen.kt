@@ -65,6 +65,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.campusprint.bridge.data.model.ConnectionState
+import com.campusprint.bridge.service.findActivity
 import com.campusprint.bridge.ui.screens.dashboard.components.JobCard
 import com.campusprint.bridge.ui.theme.BrandPrimary
 import com.campusprint.bridge.ui.theme.DarkBackground
@@ -87,7 +88,7 @@ fun DashboardScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
-    val activity = context as? Activity
+    val activity = remember(context) { context.findActivity() }
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(uiState.userMessage) {
@@ -222,14 +223,10 @@ fun DashboardScreen(
                         JobCard(
                             job = job,
                             onDownloadAndPrint = { targetJob ->
-                                activity?.let { act ->
-                                    viewModel.processAndPrintJob(act, targetJob)
-                                }
+                                viewModel.processAndPrintJob(activity, targetJob)
                             },
                             onPrintAgain = { targetJob ->
-                                activity?.let { act ->
-                                    viewModel.processAndPrintJob(act, targetJob)
-                                }
+                                viewModel.processAndPrintJob(activity, targetJob)
                             }
                         )
                     }
@@ -253,6 +250,7 @@ private fun QueueSummaryBar(
             .clip(RoundedCornerShape(14.dp))
             .background(DarkSurfaceCard)
             .border(1.dp, DarkBorder, RoundedCornerShape(14.dp))
+            .clickable(enabled = !connectionState.isConnected, onClick = onNavigateToConnection)
             .padding(14.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -386,7 +384,11 @@ private fun EmptyQueueView(
         Spacer(modifier = Modifier.height(20.dp))
 
         Text(
-            text = if (isConnected) "Listening for Print Orders..." else "Terminal Offline",
+            text = when {
+                currentFilter != JobFilter.ALL -> "No ${currentFilter.name.lowercase()} jobs"
+                isConnected -> "Listening for Print Orders..."
+                else -> "Terminal Offline"
+            },
             style = MaterialTheme.typography.titleLarge.copy(
                 fontWeight = FontWeight.Bold,
                 color = TextPrimary

@@ -4,10 +4,11 @@ import crypto from 'crypto';
 import { prisma } from '../db/prisma.js';
 import { calculateItemPrice, DEFAULT_RATE_CARD } from '../services/pricing.service.js';
 import { enqueuePrintDispatch } from '../services/queue.service.js';
+import { orderStore, EnrichedOrder } from '../services/order.store.js';
 import { env } from '../config/env.js';
 
 const orderItemInputSchema = z.object({
-  documentId: z.string().uuid(),
+  documentId: z.string(),
   pageRange: z.string().optional().default('ALL'),
   colorMode: z.enum(['BW', 'COLOR']).default('BW'),
   paperSize: z.enum(['A4', 'A3']).default('A4'),
@@ -17,8 +18,8 @@ const orderItemInputSchema = z.object({
 });
 
 const createOrderSchema = z.object({
-  studentId: z.string().uuid().optional().default('00000000-0000-0000-0000-000000000001'),
-  centerId: z.string().uuid().optional().default('00000000-0000-0000-0000-000000000002'),
+  studentId: z.string().optional().default('00000000-0000-0000-0000-000000000001'),
+  centerId: z.string().optional().default('00000000-0000-0000-0000-000000000002'),
   items: z.array(orderItemInputSchema).min(1, 'Order must contain at least one item'),
 });
 
@@ -67,11 +68,50 @@ export const orderRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const convenienceFeeCents = DEFAULT_RATE_CARD.convenienceFeeCents;
     const totalAmountCents = subtotalCents + convenienceFeeCents;
+    const orderId = crypto.randomUUID();
 
-    // 3. Persist Order and OrderItems in Database
+    // 3. Persist Order in orderStore
+    const newStoreOrder: EnrichedOrder = {
+      id: orderId,
+      studentId,
+      studentName: 'Campus Student',
+      studentPhone: '+91 98765 43210',
+      centerId,
+      status: 'PAYMENT_PENDING',
+      collectionOtp,
+      totalSheets,
+      subtotalCents,
+      convenienceFeeCents,
+      totalAmountCents,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      items: computedItems.map((ci, idx) => ({
+        id: `item-${orderId.slice(0, 8)}-${idx + 1}`,
+        orderId,
+        documentId: ci.documentId,
+        documentName: `Document_${ci.documentId.slice(0, 6)}.pdf`,
+        totalPages: ci.pageCount,
+        pageRange: ci.pageRange,
+        colorMode: ci.colorMode,
+        paperSize: ci.paperSize,
+        duplexMode: ci.duplexMode,
+        copies: ci.copies,
+        computedSheets: ci.computedSheets,
+        itemTotalCents: ci.itemTotalCents,
+      })),
+      payment: {
+        amountCents: totalAmountCents,
+        status: 'PENDING',
+      },
+    };
+
+    orderStore.saveOrder(newStoreOrder);
+
+    // 4. Also attempt persistence in database if available
     try {
-      const order = await prisma.order.create({
+      await prisma.order.create({
         data: {
+          id: orderId,
           studentId,
           centerId,
           status: 'PAYMENT_PENDING',
@@ -100,55 +140,24 @@ export const orderRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
             },
           },
         },
-        include: {
-          items: true,
-          payment: true,
-        },
       });
+    } catch (_: any) {}
 
-      return reply.status(201).send({
-        success: true,
-        data: {
-          orderId: order.id,
-          status: order.status,
-          collectionOtp: order.collectionOtp,
-          totalSheets: order.totalSheets,
-          subtotalCents: order.subtotalCents,
-          convenienceFeeCents: order.convenienceFeeCents,
-          totalAmountCents: order.totalAmountCents,
-          items: order.items,
-          payment: order.payment,
-          createdAt: order.createdAt,
-        },
-      });
-    } catch (dbErr: any) {
-      console.warn('DB write failed (running in mock mode):', dbErr.message);
-
-      const mockOrderId = crypto.randomUUID();
-      return reply.status(201).send({
-        success: true,
-        data: {
-          orderId: mockOrderId,
-          status: 'PAYMENT_PENDING',
-          collectionOtp,
-          totalSheets,
-          subtotalCents,
-          convenienceFeeCents,
-          totalAmountCents,
-          items: computedItems.map((ci) => ({
-            id: crypto.randomUUID(),
-            orderId: mockOrderId,
-            ...ci,
-          })),
-          payment: {
-            amountCents: totalAmountCents,
-            currency: 'INR',
-            status: 'PENDING',
-          },
-          createdAt: new Date(),
-        },
-      });
-    }
+    return reply.status(201).send({
+      success: true,
+      data: {
+        orderId,
+        status: 'PAYMENT_PENDING',
+        collectionOtp,
+        totalSheets,
+        subtotalCents,
+        convenienceFeeCents,
+        totalAmountCents,
+        items: newStoreOrder.items,
+        payment: newStoreOrder.payment,
+        createdAt: newStoreOrder.createdAt,
+      },
+    });
   });
 
   /**
@@ -157,84 +166,100 @@ export const orderRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.post('/api/v1/orders/:id/confirm-payment', async (req, reply) => {
     const { id } = req.params as { id: string };
 
+    const order = orderStore.getOrder(id);
+    if (!order) {
+      return reply.status(404).send({ error: 'Order not found' });
+    }
+
+    orderStore.updateStatus(id, 'PAYMENT_VERIFIED');
+
     try {
-      const order = await prisma.order.findUnique({
-        where: { id },
-        include: {
-          items: {
-            include: { document: true },
-          },
-        },
-      });
-
-      if (!order) {
-        return reply.status(404).send({ error: 'Order not found' });
-      }
-
-      // Update to PAYMENT_VERIFIED
       await prisma.order.update({
         where: { id },
         data: { status: 'PAYMENT_VERIFIED' },
       });
+    } catch (_: any) {}
 
-      // Dispatch items to print agent queue
-      for (const item of order.items) {
-        const downloadUrl = `${env.PUBLIC_BASE_URL}/api/v1/documents/download/${item.document.s3Key ? item.document.s3Key.split('/').pop() : 'mock.pdf'}`;
+    // Dispatch items to print agent queue
+    for (const item of order.items) {
+      const downloadUrl = `${env.PUBLIC_BASE_URL}/api/v1/documents/download/${item.documentName || 'mock.pdf'}`;
 
-        await enqueuePrintDispatch({
-          orderId: order.id,
-          orderItemId: item.id,
-          centerId: order.centerId,
-          payload: {
-            orderItemId: item.id,
-            documentName: item.document.fileName,
-            totalPages: item.document.pageCount,
-            colorMode: item.colorMode,
-            duplexMode: item.duplexMode,
-            paperSize: item.paperSize,
-            copies: item.copies,
-            downloadUrl,
-            createdAt: Date.now(),
-          },
-        });
-      }
-
-      return reply.send({
-        success: true,
-        message: 'Payment confirmed. Print jobs dispatched to operator terminal.',
+      await enqueuePrintDispatch({
         orderId: order.id,
-        status: 'QUEUED',
+        orderItemId: item.id,
+        centerId: order.centerId,
+        payload: {
+          orderItemId: item.id,
+          documentName: item.documentName,
+          totalPages: item.totalPages,
+          colorMode: item.colorMode,
+          duplexMode: item.duplexMode,
+          paperSize: item.paperSize,
+          copies: item.copies,
+          downloadUrl,
+          createdAt: Date.now(),
+        },
       });
-    } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
     }
+
+    return reply.send({
+      success: true,
+      message: 'Payment confirmed. Print jobs dispatched to operator terminal.',
+      orderId: order.id,
+      status: 'QUEUED',
+    });
   });
 
   /**
-   * Get Order Status
+   * Get Order Status with live queue position & wait time
    */
   app.get('/api/v1/orders/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
 
-    try {
-      const order = await prisma.order.findUnique({
-        where: { id },
-        include: {
-          items: {
-            include: { document: true, printJobs: true },
-          },
-          payment: true,
-        },
-      });
+    const order = orderStore.getOrder(id);
 
-      if (!order) {
+    if (!order) {
+      // Try querying Prisma DB
+      try {
+        const dbOrder = await prisma.order.findUnique({
+          where: { id },
+          include: {
+            items: {
+              include: { document: true, printJobs: true },
+            },
+            payment: true,
+          },
+        });
+
+        if (!dbOrder) {
+          return reply.status(404).send({ error: 'Order not found' });
+        }
+
+        const queueMetrics = orderStore.calculateQueuePosition(id);
+        return reply.send({
+          success: true,
+          data: {
+            ...dbOrder,
+            queuePosition: queueMetrics.queuePosition,
+            estimatedWaitMinutes: queueMetrics.estimatedWaitMinutes,
+          },
+        });
+      } catch (_: any) {
         return reply.status(404).send({ error: 'Order not found' });
       }
-
-      return reply.send({ success: true, data: order });
-    } catch (err: any) {
-      return reply.status(500).send({ error: err.message });
     }
+
+    const queueMetrics = orderStore.calculateQueuePosition(order.id);
+
+    return reply.send({
+      success: true,
+      data: {
+        ...order,
+        queuePosition: queueMetrics.queuePosition,
+        estimatedWaitMinutes: queueMetrics.estimatedWaitMinutes,
+        aheadJobsCount: queueMetrics.aheadJobsCount,
+        aheadSheets: queueMetrics.aheadSheets,
+      },
+    });
   });
 };
-

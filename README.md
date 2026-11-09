@@ -27,33 +27,36 @@ A modular, production-ready campus print ordering platform consisting of an **An
 │           └── ui/                 # Material 3 Minimalist Dark Theme, Setup & Dashboard screens
 │
 ├── packages/
-│   └── backend/                    # Fastify + TypeScript + Prisma Backend Service
-│       ├── .env.example            # Environment variables template
-│       ├── .gitignore              # Package-specific gitignore
-│       ├── package.json            # Node.js scripts (dev, build, start, prisma)
-│       ├── tsconfig.json           # NodeNext TypeScript configuration
-│       ├── prisma/
-│       │   ├── schema.prisma       # Full PostgreSQL relational schema with all models & enums
-│       │   └── seed.ts             # Database seeder for default Center, Operator, and Printer
-│       ├── uploads/                # Local/mock storage directory for inspected PDFs
+│   ├── backend/                    # Fastify + TypeScript + Prisma Backend Service
+│   │   ├── .env.example            # Environment variables template
+│   │   ├── .gitignore              # Package-specific gitignore
+│   │   ├── package.json            # Node.js scripts (dev, build, start, prisma)
+│   │   ├── tsconfig.json           # NodeNext TypeScript configuration
+│   │   ├── prisma/
+│   │   │   ├── schema.prisma       # Full PostgreSQL relational schema with all models & enums
+│   │   │   └── seed.ts             # Database seeder for default Center, Operator, and Printer
+│   │   ├── uploads/                # Local/mock storage directory for inspected PDFs
+│   │   └── src/
+│   │       ├── config/env.ts       # Zod-validated environment configuration
+│   │       ├── db/prisma.ts        # Singleton PrismaClient with health verification
+│   │       ├── routes/             # REST API routes (pricing, documents, orders, payments, agent)
+│   │       ├── services/           # Pricing engine, document inspector, queue service
+│   │       ├── ws/                 # WebSocket agent gateway & active registry pool
+│   │       └── server.ts           # Fastify server entry point
+│   │
+│   └── web/                        # Next.js 14+ (App Router) Student Portal & Operator Console
+│       ├── .env.local              # Client-side configuration (NEXT_PUBLIC_API_URL)
+│       ├── package.json            # Next.js, React, Tailwind CSS, Lucide icons
+│       ├── tailwind.config.ts      # Minimalist dark theme palette (slate-950, sky-500)
 │       └── src/
-│           ├── config/
-│           │   └── env.ts          # Zod-validated environment configuration
-│           ├── db/
-│           │   └── prisma.ts       # Singleton PrismaClient with health verification
-│           ├── routes/
-│           │   ├── pricing.routes.ts   # POST /api/v1/pricing/calculate
-│           │   ├── documents.routes.ts # POST /api/v1/documents/upload & GET /download/:filename
-│           │   ├── orders.routes.ts    # POST /api/v1/orders/create & confirm-payment
-│           │   └── agent.routes.ts     # GET /api/v1/agent/test-dispatch & connected agents
-│           ├── services/
-│           │   ├── pricing.service.ts  # Deterministic sheet-level & toner pricing engine
-│           │   ├── document.service.ts # pdf-lib inspector, %PDF- validator & SHA-256 deduplication
-│           │   └── queue.service.ts    # BullMQ + Redis queue with direct-dispatch fallback
-│           ├── ws/
-│           │   ├── agent.registry.ts   # In-memory connection pool for connected operator terminals
-│           │   └── agent.socket.ts     # WebSocket agent gateway at /api/v1/agent/socket
-│           └── server.ts           # Fastify server entry point
+│           ├── app/
+│           │   ├── layout.tsx      # Root App Router layout
+│           │   ├── student/        # Student portal: multi-file upload & live quote configurator
+│           │   ├── orders/[id]/    # Live order tracker with 4-digit Collection OTP & stepper
+│           │   ├── operator/       # Xerox centre operator workbench with queue management
+│           │   └── admin/          # Admin rate card matrix & printer hardware registry
+│           ├── components/         # Navbar, DocumentUploader, PrintConfigCard, CartDrawer, RazorpayModal
+│           └── lib/                # Client-side API fetchers & TypeScript interfaces
 ```
 
 ---
@@ -131,16 +134,41 @@ The server will spin up on `http://localhost:4000`.
 
 ---
 
-### 2. Android Operator App Setup (`app/`)
+### 2. Next.js 14+ Web Application (`packages/web`)
+
+```bash
+# Launch Next.js dev server on port 3000
+npm run web:dev
+```
+
+Open `http://localhost:3000` in your browser:
+- **Student Portal** (`/student`): Upload multiple PDFs, configure print settings, review real-time sheet pricing, and checkout with Razorpay simulation.
+- **Order Tracking** (`/orders/[id]`): Displays 4-digit Collection OTP and live progress stepper.
+- **Operator Workbench** (`/operator`): High-throughput Xerox queue with OTP verification and live terminal status.
+- **Admin Settings** (`/admin`): Rate card matrix and hardware printer registry.
+
+---
+
+### 3. Android Operator App Setup (`app/`)
 
 1. Open the project root (`B:\xerox`) in **Android Studio**.
 2. Sync the project with Gradle.
-3. Run on the **Android Emulator** or a **Physical Device**.
+3. Run on a **Physical Device** (via USB) or the **Android Emulator**:
+   - **For Physical Devices (Default Mode)**: Connect phone via USB with USB Debugging enabled, and execute on your host machine:
+     ```bash
+     adb reverse tcp:4000 tcp:4000
+     ```
+     This routes all loopback traffic (`127.0.0.1:4000`) on the physical device directly to the Fastify backend on your PC.
+   - **For Android Emulator**: Select the `Android Emulator (10.0.2.2:4000)` preset in the setup screen.
 4. Configure connection parameters on the **Terminal Setup** screen:
-   - **Server URL**: `ws://10.0.2.2:4000/api/v1/agent/socket` (Android emulator loopback) or `ws://127.0.0.1:4000/api/v1/agent/socket` (if using USB port forwarding via `adb reverse tcp:4000 tcp:4000`).
+   - **Server URL**: `ws://127.0.0.1:4000/api/v1/agent/socket` (Primary USB default) or `ws://10.0.2.2:4000/api/v1/agent/socket` (Emulator).
    - **Center ID**: `CTR-CAMPUS-01`
    - **Agent Secret**: `campus_secret_key_123`
 5. Tap **Connect to Print Server**. The status indicator will turn vibrant green **CONNECTED**.
+
+> [!NOTE]
+> **Android PrintManager & Activity Lifecycle Handling**:
+> Under Android's system framework, `PrintManager.print()` strictly validates `if (!(mContext instanceof Activity))` and throws `IllegalStateException: Can print only from an activity` if accessed via `ApplicationContext`. `PrintBridgeManager` resolves the active foreground `Activity` through `attachActivity()` / `detachActivity()` hooked into `MainActivity`'s lifecycle and Compose context unwrapping (`findActivity()`), ensuring native print spooler dialogs launch reliably from both foreground clicks and background WebSocket events. Predictive back gestures are cleanly enabled via `android:enableOnBackInvokedCallback="true"`.
 
 ---
 

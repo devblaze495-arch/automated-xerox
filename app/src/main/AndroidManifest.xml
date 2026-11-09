@@ -24,6 +24,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.CampusPrintBridge"
         android:usesCleartextTraffic="true"
+        android:enableOnBackInvokedCallback="true"
         tools:targetApi="34">
 
         <activity
