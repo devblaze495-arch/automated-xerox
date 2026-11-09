@@ -1,0 +1,12 @@
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+spool/
+logs/
+
