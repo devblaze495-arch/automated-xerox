@@ -31,6 +31,7 @@ const envSchema = z.object({
   FAST2SMS_API_KEY: z.string().optional(),
   WHATSAPP_TOKEN: z.string().optional(),
   WHATSAPP_PHONE_ID: z.string().optional(),
+  ADMIN_SECRET: z.string().default('super_campus_admin_2026'),
 });
 
 const parsed = envSchema.safeParse(process.env);

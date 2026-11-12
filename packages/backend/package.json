@@ -8,7 +8,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "tsx --test src/services/pricing.service.test.ts src/services/printer.service.test.ts src/services/payment.service.test.ts src/services/subscription.service.test.ts src/services/storage.service.test.ts src/services/analytics.service.test.ts src/services/notification.service.test.ts",
+    "test": "tsx --test src/services/pricing.service.test.ts src/services/printer.service.test.ts src/services/payment.service.test.ts src/services/subscription.service.test.ts src/services/storage.service.test.ts src/services/analytics.service.test.ts src/services/notification.service.test.ts src/services/admin.test.ts",
     "test:e2e": "tsx src/e2e-simulation.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",

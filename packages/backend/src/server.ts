@@ -16,6 +16,7 @@ import { operatorRoutes } from './routes/operator.routes.js';
 import { subscriptionRoutes } from './routes/subscription.routes.js';
 import { analyticsRoutes } from './routes/analytics.routes.js';
 import { centersRoutes } from './routes/centers.routes.js';
+import { adminRoutes } from './routes/admin.routes.js';
 
 export async function buildServer() {
   const server = Fastify({
@@ -75,6 +76,7 @@ export async function buildServer() {
   await server.register(subscriptionRoutes);
   await server.register(analyticsRoutes);
   await server.register(centersRoutes);
+  await server.register(adminRoutes);
 
   return server;
 }

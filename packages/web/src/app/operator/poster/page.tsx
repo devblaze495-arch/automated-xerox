@@ -25,9 +25,8 @@ export default function OperatorPosterPage() {
   const [colorRate, setColorRate] = useState('₹10.00');
   const [copied, setCopied] = useState(false);
 
-  // Download URL encoded in the QR code:
-  // Points to direct APK download with center pre-selection param
-  const downloadUrl = `https://${downloadDomain}/download/CampusPrint.apk?center=${encodeURIComponent(
+  // Download landing page URL encoded in the QR code:
+  const downloadUrl = `https://${downloadDomain}/download?center=${encodeURIComponent(
     centerCode
   )}`;
 

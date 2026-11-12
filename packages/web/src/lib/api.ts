@@ -524,3 +524,92 @@ export async function updateShopSettings(updates: Partial<ShopSettings>): Promis
   return json.data;
 }
 
+
+export interface AdminOverviewResponse {
+  metrics: {
+    totalActiveCenters: number;
+    activeSubscriptions: number;
+    expiredSubscriptions: number;
+    totalSaasRevenueInr: number;
+    totalPrintOrders: number;
+    totalPrintRevenueInr: number;
+  };
+  centers: Array<{
+    id: string;
+    name: string;
+    code: string;
+    location: string;
+    ownerName: string;
+    ownerPhone: string;
+    upiVpa: string;
+    agentSecret: string;
+    isOpen: boolean;
+    isActive: boolean;
+    subscription: {
+      status: 'ACTIVE' | 'EXPIRED' | 'INACTIVE';
+      tier: string;
+      currentPeriodEnd: string | null;
+      daysRemaining: number;
+      isSubscribed: boolean;
+    };
+    agentStatus: {
+      isOnline: boolean;
+      deviceModel: string;
+      appVersion: string;
+      lastHeartbeat: string | null;
+    };
+    orderCount: number;
+    revenueGeneratedInr: number;
+  }>;
+}
+
+export async function getAdminOverview(adminSecret: string): Promise<AdminOverviewResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/admin/overview`, {
+    headers: { 'x-admin-secret': adminSecret },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Admin authentication failed (HTTP ${res.status})`);
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function createAdminCenter(
+  adminSecret: string,
+  payload: { name: string; code: string; location: string; ownerName?: string; ownerPhone?: string; upiVpa?: string }
+) {
+  const res = await fetch(`${API_BASE}/api/v1/admin/centers`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-admin-secret': adminSecret,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to onboard center');
+  }
+  return res.json();
+}
+
+export async function extendCenterSubscription(
+  adminSecret: string,
+  centerId: string,
+  extensionDays = 30
+) {
+  const res = await fetch(`${API_BASE}/api/v1/admin/centers/${centerId}/subscription`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-admin-secret': adminSecret,
+    },
+    body: JSON.stringify({ extensionDays, status: 'ACTIVE' }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to extend subscription');
+  }
+  return res.json();
+}
