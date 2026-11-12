@@ -358,6 +358,22 @@ export async function bumpOrderPriority(orderId: string, isUrgent = true): Promi
 }
 
 /**
+ * Manually re-routes an order to a specified physical Canon printer
+ */
+export async function reRouteOrderPrinter(orderId: string, targetPrinterName: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/v1/operator/orders/${orderId}/printer`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetPrinterName }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to re-route order printer');
+  }
+  return res.json();
+}
+
+/**
  * Lists all registered printers
  */
 export async function getPrinters(): Promise<PrinterDevice[]> {

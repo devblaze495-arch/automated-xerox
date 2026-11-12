@@ -77,6 +77,45 @@ public class HeartbeatMessage
     public long Timestamp { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 }
 
+public class PrinterTelemetryMessage
+{
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "PRINTER_TELEMETRY";
+
+    [JsonPropertyName("centerId")]
+    public string CenterId { get; set; } = string.Empty;
+
+    [JsonPropertyName("printers")]
+    public List<PrinterTelemetryDto> Printers { get; set; } = new();
+}
+
+public class PrinterTelemetryDto
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("port")]
+    public string Port { get; set; } = string.Empty;
+
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "ONLINE"; // "ONLINE" | "PAPER_OUT" | "OFFLINE" | "ERROR"
+
+    [JsonPropertyName("queuedJobs")]
+    public int QueuedJobs { get; set; }
+
+    [JsonPropertyName("queuedPages")]
+    public int QueuedPages { get; set; }
+
+    [JsonPropertyName("supportsColor")]
+    public bool SupportsColor { get; set; }
+
+    [JsonPropertyName("supportsA3")]
+    public bool SupportsA3 { get; set; }
+
+    [JsonPropertyName("supportsAutoDuplex")]
+    public bool SupportsAutoDuplex { get; set; }
+}
+
 public class ServerMessage
 {
     [JsonPropertyName("type")]

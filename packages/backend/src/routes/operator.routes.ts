@@ -36,6 +36,10 @@ const bumpPrioritySchema = z.object({
   isUrgent: z.boolean().optional().default(true),
 });
 
+const reroutePrinterSchema = z.object({
+  targetPrinterName: z.string().min(1, 'Target printer name is required'),
+});
+
 export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   /**
    * GET /api/v1/operator/orders
@@ -82,18 +86,26 @@ export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
     // Determine target printer
     let selectedPrinter = requestedPrinterId ? printerService.getPrinterById(requestedPrinterId) : undefined;
 
-    // If no printer specified, auto-route based on first item specs
+    // If no printer specified, smart-route using selectOptimalPrinter
     if (!selectedPrinter && order.items.length > 0) {
       const firstItem = order.items[0];
-      const matches = printerService.findCompatiblePrinters({
+      selectedPrinter = printerService.selectOptimalPrinter(order.centerId, {
         paperSize: firstItem.paperSize,
         colorMode: firstItem.colorMode,
         duplexMode: firstItem.duplexMode,
-        copies: firstItem.copies,
+        totalSheets: order.totalSheets,
       });
 
-      if (matches.length > 0) {
-        selectedPrinter = matches[0].printer;
+      if (!selectedPrinter) {
+        const matches = printerService.findCompatiblePrinters({
+          paperSize: firstItem.paperSize,
+          colorMode: firstItem.colorMode,
+          duplexMode: firstItem.duplexMode,
+          copies: firstItem.copies,
+        });
+        if (matches.length > 0) {
+          selectedPrinter = matches[0].printer;
+        }
       }
     }
 
@@ -393,6 +405,97 @@ export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
         ? `Order #${id.substring(0, 8)} bumped to top priority! It will print next.`
         : `Priority restored to standard FIFO for Order #${id.substring(0, 8)}.`,
       order: updated,
+    });
+  });
+
+  /**
+   * PATCH /api/v1/operator/orders/:id/printer
+   * Manually re-routes an order to a specified Canon machine and dispatches immediately
+   */
+  app.patch('/api/v1/operator/orders/:id/printer', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parseResult = reroutePrinterSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        error: 'Validation Error',
+        details: parseResult.error.format(),
+      });
+    }
+
+    const { targetPrinterName } = parseResult.data;
+    const order = orderStore.getOrder(id);
+    if (!order) {
+      return reply.status(404).send({ error: 'Order not found' });
+    }
+
+    // Match printer in registry by name or ID
+    const allPrinters = printerService.getAllPrinters();
+    const targetPrinter = allPrinters.find(
+      (p) =>
+        p.name.toLowerCase() === targetPrinterName.toLowerCase() ||
+        p.id.toLowerCase() === targetPrinterName.toLowerCase() ||
+        p.portName.toLowerCase() === targetPrinterName.toLowerCase() ||
+        (targetPrinterName.includes('G2010') && p.name.includes('G2010')) ||
+        (targetPrinterName.includes('G3070') && p.name.includes('G3070')) ||
+        (targetPrinterName.includes('2224') && (p.name.includes('2224') || p.name.includes('UFR')))
+    );
+
+    if (!targetPrinter) {
+      return reply.status(404).send({
+        error: `Target printer '${targetPrinterName}' not found in registry`,
+      });
+    }
+
+    // Update assigned printer in order store
+    const updatedOrder = orderStore.setOrderPrinter(order.id, targetPrinter);
+
+    // Transition status to QUEUED if currently WAITING_FOR_OPERATOR or PAYMENT_VERIFIED
+    if (updatedOrder.status === 'WAITING_FOR_OPERATOR' || updatedOrder.status === 'PAYMENT_VERIFIED') {
+      orderStore.updateStatus(updatedOrder.id, 'QUEUED', { printerId: targetPrinter.id });
+      updatedOrder.status = 'QUEUED';
+    }
+
+    // Check if spooler is currently paused for walk-ins
+    const isPaused =
+      agentRegistry.isSpoolerPaused(order.centerId) ||
+      agentRegistry.isSpoolerPaused('00000000-0000-0000-0000-000000000002');
+
+    // Dispatch items to the connected agent gateway for the selected printer
+    if (!isPaused) {
+      for (const item of updatedOrder.items) {
+        const downloadFileName = item.documentName ? item.documentName.split('/').pop() : 'campus_job.pdf';
+        const downloadUrl = `${env.PUBLIC_BASE_URL}/api/v1/documents/download/${downloadFileName}`;
+
+        await enqueuePrintDispatch({
+          orderId: updatedOrder.id,
+          orderItemId: item.id,
+          centerId: updatedOrder.centerId,
+          payload: {
+            orderItemId: item.id,
+            documentName: item.documentName,
+            totalPages: item.totalPages,
+            colorMode: item.colorMode,
+            duplexMode: item.duplexMode,
+            paperSize: item.paperSize,
+            copies: item.copies,
+            downloadUrl,
+            targetPrinter: {
+              id: targetPrinter.id,
+              name: targetPrinter.name,
+              portName: targetPrinter.portName,
+            },
+            requiresManualFlip: updatedOrder.requiresManualFlip || false,
+            createdAt: Date.now(),
+          },
+        });
+      }
+    }
+
+    return reply.send({
+      success: true,
+      message: `Order #${id.substring(0, 8)} re-routed to ${targetPrinter.name} (${targetPrinter.portName})`,
+      order: updatedOrder,
+      targetPrinter,
     });
   });
 };

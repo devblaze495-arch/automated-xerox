@@ -5,6 +5,7 @@ import { env } from '../config/env.js';
 import { agentRegistry } from './agent.registry.js';
 import { prisma } from '../db/prisma.js';
 import { orderStore } from '../services/order.store.js';
+import { printerService } from '../services/printer.service.js';
 
 export async function registerAgentWebSocket(app: FastifyInstance) {
   app.get('/api/v1/agent/socket', { websocket: true }, (socket: WebSocket, req) => {
@@ -147,6 +148,16 @@ export async function registerAgentWebSocket(app: FastifyInstance) {
               }
             } catch (dbErr: any) {
               console.warn(`DB update skipped for job status: ${dbErr.message}`);
+            }
+            break;
+          }
+
+          case 'PRINTER_TELEMETRY': {
+            const { centerId: reportedCenterId, printers } = message;
+            const targetCenter = reportedCenterId || centerId;
+            if (Array.isArray(printers)) {
+              agentRegistry.updatePrinterTelemetry(targetCenter, printers);
+              printerService.updateFromTelemetry(targetCenter, printers);
             }
             break;
           }

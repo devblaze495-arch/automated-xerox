@@ -207,6 +207,27 @@ class OrderStore {
       }
     }
     order.requiresManualFlip = orderRequiresManualFlip;
+
+    // Auto-route to optimal printer if not yet assigned
+    if (!order.assignedPrinterId && order.items.length > 0) {
+      const firstItem = order.items[0];
+      const optimal = printerService.selectOptimalPrinter(order.centerId, {
+        paperSize: firstItem.paperSize,
+        colorMode: firstItem.colorMode,
+        duplexMode: firstItem.duplexMode,
+        totalSheets: order.totalSheets,
+      });
+      if (optimal) {
+        order.assignedPrinterId = optimal.id;
+        order.assignedPrinterName = optimal.name;
+        order.assignedPrinterPort = optimal.portName;
+        const hasDuplex = order.items.some((i) => i.duplexMode !== 'SIMPLEX');
+        order.requiresManualFlip = hasDuplex && !optimal.capabilities.autoDuplex;
+        for (const item of order.items) {
+          item.assignedPrinterId = optimal.id;
+        }
+      }
+    }
   }
 
   private async syncFromDatabase() {
@@ -324,6 +345,42 @@ class OrderStore {
           data: {
             isUrgent: order.isUrgent,
             priorityScore: order.priorityScore,
+          },
+        })
+        .catch(() => {});
+    } catch (_err) {}
+
+    return order;
+  }
+
+  public setOrderPrinter(
+    orderId: string,
+    printer: { id: string; name: string; portName: string; capabilities: any }
+  ): EnrichedOrder {
+    const order = this.getOrder(orderId);
+    if (!order) throw new Error('Order not found');
+
+    order.assignedPrinterId = printer.id;
+    order.assignedPrinterName = printer.name;
+    order.assignedPrinterPort = printer.portName;
+
+    const hasDuplex = order.items.some((i) => i.duplexMode !== 'SIMPLEX');
+    order.requiresManualFlip = hasDuplex && !printer.capabilities.autoDuplex;
+
+    for (const item of order.items) {
+      item.assignedPrinterId = printer.id;
+      item.requiresManualFlip = order.requiresManualFlip;
+    }
+
+    order.updatedAt = new Date();
+    this.orders.set(order.id, order);
+
+    try {
+      prisma.order
+        .update({
+          where: { id: order.id },
+          data: {
+            updatedAt: new Date(),
           },
         })
         .catch(() => {});

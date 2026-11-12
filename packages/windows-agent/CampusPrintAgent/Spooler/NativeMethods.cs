@@ -119,6 +119,29 @@ public static class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    public struct JOB_INFO_1
+    {
+        public uint JobId;
+        [MarshalAs(UnmanagedType.LPTStr)]
+        public string pPrinterName;
+        [MarshalAs(UnmanagedType.LPTStr)]
+        public string pMachineName;
+        [MarshalAs(UnmanagedType.LPTStr)]
+        public string pUserName;
+        [MarshalAs(UnmanagedType.LPTStr)]
+        public string pDocument;
+        [MarshalAs(UnmanagedType.LPTStr)]
+        public string pDatatype;
+        [MarshalAs(UnmanagedType.LPTStr)]
+        public string pStatus;
+        public uint Status;
+        public uint Priority;
+        public uint Position;
+        public uint TotalPages;
+        public uint PagesPrinted;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
     public struct DEVMODE
     {
         private const int CCHDEVICENAME = 32;
@@ -204,6 +227,17 @@ public static class NativeMethods
         IntPtr pPrinter,
         uint cbBuf,
         out uint pcbNeeded);
+
+    [DllImport(WinSpool, EntryPoint = "EnumJobs", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern bool EnumJobs(
+        IntPtr hPrinter,
+        uint FirstJob,
+        uint NoJobs,
+        uint Level,
+        IntPtr pJob,
+        uint cbBuf,
+        out uint pcbNeeded,
+        out uint pcReturned);
 
     #endregion
 }

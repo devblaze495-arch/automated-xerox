@@ -28,6 +28,18 @@ export interface ConnectedAgent {
   lastHeartbeat: Date;
 }
 
+export interface PrinterTelemetry {
+  name: string;
+  port: string;
+  status: 'ONLINE' | 'PAPER_OUT' | 'OFFLINE' | 'ERROR';
+  queuedJobs: number;
+  queuedPages: number;
+  supportsColor: boolean;
+  supportsA3: boolean;
+  supportsAutoDuplex: boolean;
+  lastUpdated?: Date;
+}
+
 class AgentRegistry {
   // Map of connectionId -> ConnectedAgent
   private agents = new Map<string, ConnectedAgent>();
@@ -37,6 +49,22 @@ class AgentRegistry {
 
   // Map of centerId -> isSpoolerPaused
   private centerSpoolerPaused = new Map<string, boolean>();
+
+  // Map of centerId -> PrinterTelemetry[]
+  private centerTelemetry = new Map<string, PrinterTelemetry[]>();
+
+  public updatePrinterTelemetry(centerId: string, telemetry: PrinterTelemetry[]): void {
+    const listWithTimestamp = telemetry.map((t) => ({
+      ...t,
+      lastUpdated: new Date(),
+    }));
+    this.centerTelemetry.set(centerId, listWithTimestamp);
+    console.log(`📊 Updated printer telemetry for Center [${centerId}]: ${telemetry.length} printer(s)`);
+  }
+
+  public getPrinterTelemetry(centerId: string): PrinterTelemetry[] {
+    return this.centerTelemetry.get(centerId) || [];
+  }
 
   public isSpoolerPaused(centerId: string): boolean {
     return this.centerSpoolerPaused.get(centerId) ?? false;

@@ -22,6 +22,30 @@ export interface PrinterDevice {
   isActive: boolean;
   centerId: string;
   currentQueueCount: number;
+  status?: 'ONLINE' | 'PAPER_OUT' | 'OFFLINE' | 'ERROR';
+  queuedJobs?: number;
+  queuedPages?: number;
+  lastTelemetryAt?: Date;
+}
+
+export interface PrinterTelemetry {
+  name: string;
+  port: string;
+  status: 'ONLINE' | 'PAPER_OUT' | 'OFFLINE' | 'ERROR';
+  queuedJobs: number;
+  queuedPages: number;
+  supportsColor: boolean;
+  supportsA3: boolean;
+  supportsAutoDuplex: boolean;
+  lastUpdated?: Date;
+}
+
+export interface OptimalPrinterJobConfig {
+  paperSize: 'A4' | 'A3';
+  colorMode: 'BW' | 'COLOR';
+  duplexMode?: 'SIMPLEX' | 'DUPLEX_LONG' | 'DUPLEX_SHORT' | string;
+  totalSheets?: number;
+  sheets?: number;
 }
 
 export interface PrinterMatchResult {
@@ -113,6 +137,7 @@ const defaultPrinters: PrinterDevice[] = [
 
 class PrinterService {
   private printers: Map<string, PrinterDevice> = new Map();
+  private centerTelemetry: Map<string, Map<string, PrinterTelemetry>> = new Map();
 
   constructor() {
     for (const p of defaultPrinters) {
@@ -126,10 +151,12 @@ class PrinterService {
       const dbPrinters = await prisma.printer.findMany();
       if (dbPrinters.length > 0) {
         for (const dp of dbPrinters) {
-          const existing = this.printers.get(dp.id);
+          const shortId = Object.keys(PRINTER_UUID_MAP).find((k) => PRINTER_UUID_MAP[k] === dp.id);
+          const targetId = shortId || dp.id;
+          const existing = this.printers.get(targetId);
           const caps = (dp.capabilities as any) || existing?.capabilities;
-          this.printers.set(dp.id, {
-            id: dp.id,
+          const printerObj: PrinterDevice = {
+            id: targetId,
             name: dp.name,
             model: dp.model,
             portName: dp.portName || existing?.portName || 'USB001',
@@ -139,7 +166,9 @@ class PrinterService {
             isActive: dp.isActive,
             centerId: dp.centerId,
             currentQueueCount: existing?.currentQueueCount || 0,
-          });
+          };
+          this.printers.set(targetId, printerObj);
+          this.printers.set(dp.id, printerObj);
         }
       } else {
         // Seed database if empty
@@ -174,7 +203,15 @@ class PrinterService {
    * Returns all printers in the registry.
    */
   public getAllPrinters(): PrinterDevice[] {
-    return Array.from(this.printers.values());
+    const seen = new Set<string>();
+    const list: PrinterDevice[] = [];
+    for (const p of this.printers.values()) {
+      if (!seen.has(p.name)) {
+        seen.add(p.name);
+        list.push(p);
+      }
+    }
+    return list;
   }
 
   /**
@@ -188,11 +225,16 @@ class PrinterService {
    * Toggles the online/offline availability of a printer.
    */
   public async togglePrinterOnline(id: string, isOnline?: boolean): Promise<PrinterDevice | null> {
-    const printer = this.printers.get(id);
+    const printer = this.printers.get(id) || this.printers.get(PRINTER_UUID_MAP[id] || '');
     if (!printer) return null;
 
     printer.isOnline = isOnline !== undefined ? isOnline : !printer.isOnline;
+    printer.status = printer.isOnline ? 'ONLINE' : 'OFFLINE';
     this.printers.set(id, printer);
+    this.printers.set(printer.id, printer);
+    if (PRINTER_UUID_MAP[printer.id]) {
+      this.printers.set(PRINTER_UUID_MAP[printer.id], printer);
+    }
 
     // Sync to DB if available
     try {
@@ -224,8 +266,12 @@ class PrinterService {
     const isDuplex = specs.duplexMode !== 'SIMPLEX';
 
     const matches: PrinterMatchResult[] = [];
+    const seen = new Set<string>();
 
     for (const printer of this.printers.values()) {
+      if (seen.has(printer.name)) continue;
+      seen.add(printer.name);
+
       // Must be active and online
       if (!printer.isActive || !printer.isOnline) {
         continue;
@@ -292,6 +338,157 @@ class PrinterService {
     if (printer) {
       printer.currentQueueCount = Math.max(0, printer.currentQueueCount + delta);
     }
+  }
+
+  /**
+   * Ingests real-time hardware telemetry reported from the Windows Print Agent
+   */
+  public updateFromTelemetry(centerId: string, telemetryList: PrinterTelemetry[]): void {
+    if (!this.centerTelemetry.has(centerId)) {
+      this.centerTelemetry.set(centerId, new Map());
+    }
+    const centerMap = this.centerTelemetry.get(centerId)!;
+
+    for (const t of telemetryList) {
+      centerMap.set(t.name, { ...t, lastUpdated: new Date() });
+
+      // Match all printer instances in registry
+      for (const printer of this.printers.values()) {
+        const isMatch =
+          printer.name.toLowerCase() === t.name.toLowerCase() ||
+          printer.portName.toLowerCase() === t.port.toLowerCase() ||
+          (printer.name.includes('G2010') && t.name.includes('G2010')) ||
+          (printer.name.includes('G3070') && t.name.includes('G3070')) ||
+          (printer.name.includes('2224') && (t.name.includes('UFR') || t.name.includes('2224')));
+
+        if (isMatch) {
+          printer.status = t.status;
+          printer.isOnline = t.status === 'ONLINE';
+          printer.queuedJobs = t.queuedJobs;
+          printer.queuedPages = t.queuedPages;
+          printer.currentQueueCount = t.queuedJobs;
+          printer.lastTelemetryAt = new Date();
+        }
+      }
+    }
+  }
+
+  public getTelemetry(centerId: string): PrinterTelemetry[] {
+    const map = this.centerTelemetry.get(centerId);
+    if (!map) return [];
+    return Array.from(map.values());
+  }
+
+  /**
+   * Smart load-balancing printer selection:
+   * 1. Filter printers that are ONLINE (skip OFFLINE, PAPER_OUT, or ERROR).
+   * 2. Filter by hard capabilities:
+   *    - A3 paper requires supportsA3 (imageRUNNER 2224)
+   *    - Full color requires supportsColor (PIXMA G2010 or G3070)
+   *    - Duplex requires autoDuplex or manualDuplex
+   * 3. Load-balance among eligible printers:
+   *    - Score: (queuedPages * 2 + queuedJobs)
+   *    - For B&W A4 Duplex jobs > 10 sheets: prefer supportsAutoDuplex === true (imageRUNNER 2224)
+   *      unless its queue exceeds 150 pages while G2010/G3070 are idle.
+   *    - For fast-lane jobs (<= 5 sheets): pick eligible printer with queuedJobs === 0 first.
+   *    - General: sort by lowest (queuedPages * 2 + queuedJobs) score.
+   */
+  public selectOptimalPrinter(
+    centerId: string,
+    jobConfig: OptimalPrinterJobConfig
+  ): PrinterDevice | undefined {
+    // Collect distinct printer engines by name
+    const seenNames = new Set<string>();
+    const allPrinters: PrinterDevice[] = [];
+    for (const p of this.printers.values()) {
+      if (!seenNames.has(p.name)) {
+        seenNames.add(p.name);
+        allPrinters.push(p);
+      }
+    }
+
+    const candidates = allPrinters.filter(
+      (p) =>
+        !centerId ||
+        p.centerId === centerId ||
+        centerId === 'CTR-CAMPUS-01' ||
+        p.centerId === '00000000-0000-0000-0000-000000000002'
+    );
+    const pool = candidates.length > 0 ? candidates : allPrinters;
+
+    // 1. Filter printers that are ONLINE (skip OFFLINE, PAPER_OUT, ERROR)
+    const onlinePrinters = pool.filter((p) => {
+      if (!p.isActive) return false;
+      if (p.status) {
+        return p.status === 'ONLINE';
+      }
+      return p.isOnline;
+    });
+
+    if (onlinePrinters.length === 0) return undefined;
+
+    // 2. Filter by hard capabilities
+    const isA3 = jobConfig.paperSize === 'A3';
+    const isColor = jobConfig.colorMode === 'COLOR';
+    const isDuplex = !!jobConfig.duplexMode && jobConfig.duplexMode !== 'SIMPLEX';
+
+    const eligible = onlinePrinters.filter((p) => {
+      if (isA3 && !p.capabilities.a3) return false;
+      if (!isA3 && !p.capabilities.a4) return false;
+      if (isColor && !p.capabilities.color) return false;
+      if (isDuplex && !p.capabilities.autoDuplex && !p.capabilities.manualDuplex) return false;
+      return true;
+    });
+
+    if (eligible.length === 0) return undefined;
+    if (eligible.length === 1) return eligible[0];
+
+    const getQueuedJobs = (p: PrinterDevice) => p.queuedJobs ?? p.currentQueueCount ?? 0;
+    const getQueuedPages = (p: PrinterDevice) => p.queuedPages ?? (getQueuedJobs(p) * 2);
+    const getLoadScore = (p: PrinterDevice) => (getQueuedPages(p) * 2) + getQueuedJobs(p);
+
+    const totalSheets = jobConfig.totalSheets ?? jobConfig.sheets ?? 1;
+
+    // Rule A: B&W A4 Duplex > 10 sheets
+    // Prefer supportsAutoDuplex === true (imageRUNNER 2224) unless its queue exceeds 150 pages while G2010/G3070 are idle.
+    const isBwA4DuplexHeavy = !isColor && !isA3 && isDuplex && totalSheets > 10;
+    if (isBwA4DuplexHeavy) {
+      const autoDuplexPrinter = eligible.find((p) => p.capabilities.autoDuplex);
+      const idleAlternative = eligible.find(
+        (p) => !p.capabilities.autoDuplex && getQueuedJobs(p) === 0
+      );
+
+      if (autoDuplexPrinter) {
+        if (getQueuedPages(autoDuplexPrinter) > 150 && idleAlternative) {
+          // imageRUNNER is backed up (>150 pages) and G2010/G3070 is idle -> offload to idle printer
+          return idleAlternative;
+        }
+        return autoDuplexPrinter;
+      }
+    }
+
+    // Rule B: Fast-lane jobs (<= 5 sheets)
+    // Pick the eligible printer with queuedJobs === 0 first.
+    const isFastLane = totalSheets <= 5;
+    if (isFastLane) {
+      const idlePrinters = eligible.filter((p) => getQueuedJobs(p) === 0);
+      if (idlePrinters.length > 0) {
+        idlePrinters.sort((a, b) => getLoadScore(a) - getLoadScore(b));
+        return idlePrinters[0];
+      }
+    }
+
+    // Rule C: Load-balance among eligible printers by lowest score
+    eligible.sort((a, b) => {
+      const scoreA = getLoadScore(a);
+      const scoreB = getLoadScore(b);
+      if (scoreA !== scoreB) {
+        return scoreA - scoreB;
+      }
+      return (b.capabilities.ppmSpeed || 0) - (a.capabilities.ppmSpeed || 0);
+    });
+
+    return eligible[0];
   }
 }
 

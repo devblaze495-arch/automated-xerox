@@ -16,6 +16,7 @@ public class AgentWebSocketClient
     private readonly DocumentDownloader _downloader;
     private readonly WindowsPrintDispatcher _dispatcher;
     private readonly JobDeduplicator _deduplicator;
+    private readonly SpoolerMonitor _spoolerMonitor;
     private readonly ILogger<AgentWebSocketClient> _logger;
 
     private ClientWebSocket? _webSocket;
@@ -30,12 +31,14 @@ public class AgentWebSocketClient
         DocumentDownloader downloader,
         WindowsPrintDispatcher dispatcher,
         JobDeduplicator deduplicator,
+        SpoolerMonitor spoolerMonitor,
         ILogger<AgentWebSocketClient> logger)
     {
         _options = options.Value;
         _downloader = downloader;
         _dispatcher = dispatcher;
         _deduplicator = deduplicator;
+        _spoolerMonitor = spoolerMonitor;
         _logger = logger;
     }
 
@@ -65,12 +68,16 @@ public class AgentWebSocketClient
                 // Send DEVICE_REGISTER
                 await SendDeviceRegistrationAsync(cancellationToken);
 
-                // Run Heartbeat and Receive loops concurrently
+                // Send initial PRINTER_TELEMETRY immediately upon connect
+                await SendPrinterTelemetryAsync(cancellationToken);
+
+                // Run Heartbeat, Telemetry and Receive loops concurrently
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 var heartbeatTask = RunHeartbeatLoopAsync(linkedCts.Token);
+                var telemetryTask = RunPrinterTelemetryLoopAsync(linkedCts.Token);
                 var receiveTask = RunReceiveLoopAsync(linkedCts.Token);
 
-                var completedTask = await Task.WhenAny(heartbeatTask, receiveTask);
+                var completedTask = await Task.WhenAny(heartbeatTask, telemetryTask, receiveTask);
                 linkedCts.Cancel();
 
                 await completedTask; // observe exceptions if any
@@ -138,6 +145,38 @@ public class AgentWebSocketClient
             {
                 _logger.LogWarning(ex, "Failed to send heartbeat ping.");
                 break;
+            }
+        }
+    }
+
+    private async Task SendPrinterTelemetryAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var telemetryList = _spoolerMonitor.CollectAllTelemetry(_options.Printers);
+            var message = new PrinterTelemetryMessage
+            {
+                CenterId = _options.CenterId,
+                Printers = telemetryList
+            };
+            await SendJsonAsync(message, cancellationToken);
+            _logger.LogDebug("Dispatched live PRINTER_TELEMETRY update for {Count} printer(s).", telemetryList.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to dispatch printer telemetry update.");
+        }
+    }
+
+    private async Task RunPrinterTelemetryLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested && _webSocket?.State == WebSocketState.Open)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+
+            if (_webSocket?.State == WebSocketState.Open)
+            {
+                await SendPrinterTelemetryAsync(cancellationToken);
             }
         }
     }

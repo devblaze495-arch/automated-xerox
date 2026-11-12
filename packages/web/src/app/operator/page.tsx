@@ -18,6 +18,7 @@ import {
   updateShopSettings,
   toggleSpoolerPause,
   bumpOrderPriority,
+  reRouteOrderPrinter,
 } from '@/lib/api';
 import { EnrichedOperatorOrder, PrinterDevice, ConnectedAgentInfo, ShopSettings } from '@/lib/types';
 import {
@@ -143,6 +144,18 @@ export default function OperatorDashboardPage() {
       setOrders(freshOrders);
     } catch (err: any) {
       alert(err.message || 'Failed to accept order');
+    }
+  };
+
+  const handleReRoutePrinter = async (orderId: string, targetPrinterName: string) => {
+    try {
+      const res = await reRouteOrderPrinter(orderId, targetPrinterName);
+      setDispatchFeedback(`🔀 ${res.message || `Order #${orderId.substring(0, 8)} re-routed to ${targetPrinterName}`}`);
+      setSelectedPrinters((prev) => ({ ...prev, [orderId]: targetPrinterName }));
+      const freshOrders = await getOperatorOrders();
+      setOrders(freshOrders);
+    } catch (err: any) {
+      alert(err.message || 'Failed to re-route order printer');
     }
   };
 
@@ -445,6 +458,35 @@ export default function OperatorDashboardPage() {
                   </button>
                 </div>
 
+                {/* Live Queue Load & Spooler Telemetry Badge */}
+                <div className="mt-2.5 flex items-center gap-1.5 font-mono text-[11px]">
+                  {printer.status === 'PAPER_OUT' ? (
+                    <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold flex items-center gap-1 animate-pulse">
+                      <AlertTriangle className="h-3 w-3 text-amber-400" />
+                      PAPER OUT · 0 jobs
+                    </span>
+                  ) : !printer.isOnline || printer.status === 'OFFLINE' ? (
+                    <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold">
+                      OFFLINE
+                    </span>
+                  ) : printer.status === 'ERROR' ? (
+                    <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3 text-rose-400" />
+                      ERROR
+                    </span>
+                  ) : (printer.queuedJobs ?? printer.currentQueueCount ?? 0) > 0 ? (
+                    <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold flex items-center gap-1">
+                      <Clock className="h-3 w-3 text-amber-400" />
+                      BUSY · {printer.queuedJobs ?? printer.currentQueueCount} jobs ({printer.queuedPages ?? ((printer.queuedJobs ?? printer.currentQueueCount) * 2)} pgs)
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold flex items-center gap-1">
+                      <Check className="h-3 w-3 text-emerald-400" />
+                      ONLINE · 0 jobs
+                    </span>
+                  )}
+                </div>
+
                 {/* Capabilities Badges */}
                 <div className="mt-3 flex flex-wrap gap-1 text-[10px] font-mono">
                   {printer.capabilities.a4 && (
@@ -631,35 +673,40 @@ export default function OperatorDashboardPage() {
                             {order.totalSheets} Total Physical Sheets
                           </span>
 
-                          {assignedPrinter ? (
-                            <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
-                              <Printer className="h-3 w-3" />
-                              {assignedPrinter.name} ({assignedPrinter.portName})
+                          {/* Auto-Selected Printer Badge & Manual Switcher Dropdown */}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5 shadow-sm text-xs font-mono font-semibold">
+                              <Printer className="h-3.5 w-3.5 text-emerald-400" />
+                              <span>
+                                {assignedPrinter
+                                  ? `Auto-Routed: ${assignedPrinter.name}`
+                                  : order.assignedPrinterName
+                                  ? `Auto-Routed: ${order.assignedPrinterName}`
+                                  : 'Auto-Routing to Best Engine'}
+                              </span>
                             </span>
-                          ) : (
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-slate-400">Route to:</span>
-                              <select
-                                value={selectedPrinters[order.id] || ''}
-                                onChange={(e) =>
-                                  setSelectedPrinters((prev) => ({
-                                    ...prev,
-                                    [order.id]: e.target.value,
-                                  }))
-                                }
-                                className="px-2 py-1 rounded-lg bg-surface-card border border-surface-border text-white text-xs focus:outline-none focus:border-brand-500"
-                              >
-                                <option value="">Auto-Select Best Printer</option>
-                                {printers
-                                  .filter((p) => p.isOnline)
-                                  .map((p) => (
-                                    <option key={p.id} value={p.id}>
-                                      {p.name} ({p.portName})
+
+                            {/* Manual Printer Re-Route Switcher for Queued / Active Orders */}
+                            {(order.status === 'PAYMENT_VERIFIED' ||
+                              order.status === 'WAITING_FOR_OPERATOR' ||
+                              order.status === 'QUEUED') && (
+                              <div className="flex items-center gap-1.5 text-xs font-sans">
+                                <span className="text-slate-400 text-[11px] font-mono">Switch:</span>
+                                <select
+                                  value={assignedPrinter?.name || order.assignedPrinterName || ''}
+                                  onChange={(e) => handleReRoutePrinter(order.id, e.target.value)}
+                                  className="px-2 py-1 rounded-lg bg-surface-card border border-surface-border text-white text-xs focus:outline-none focus:border-brand-500 font-mono"
+                                  title="Manually switch the target physical printer engine"
+                                >
+                                  {printers.map((p) => (
+                                    <option key={p.id} value={p.name}>
+                                      {p.name} ({p.portName}) {p.status ? `[${p.status}]` : p.isOnline ? '[ONLINE]' : '[OFFLINE]'}
                                     </option>
                                   ))}
-                              </select>
-                            </div>
-                          )}
+                                </select>
+                              </div>
+                            )}
+                          </div>
 
                           {/* Manual Paper Flip Required Warning */}
                           {requiresManualFlip && (

@@ -109,6 +109,9 @@ export interface PrinterDevice {
   isActive: boolean;
   centerId: string;
   currentQueueCount: number;
+  status?: 'ONLINE' | 'PAPER_OUT' | 'OFFLINE' | 'ERROR';
+  queuedJobs?: number;
+  queuedPages?: number;
 }
 
 export interface PrinterMatchResult {
