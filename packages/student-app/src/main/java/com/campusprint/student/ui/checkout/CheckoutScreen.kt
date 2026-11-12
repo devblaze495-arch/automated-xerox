@@ -16,11 +16,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.campusprint.student.BuildConfig
 import com.campusprint.student.data.repository.CenterRepository
 import com.campusprint.student.ui.theme.*
 
@@ -47,6 +51,20 @@ fun CheckoutScreen(
     val convenienceFeeRupees = 1.00
     val totalPayableRupees = subtotalRupees + convenienceFeeRupees
     var studentPhone by remember { mutableStateOf(CenterRepository.getSavedPhone()) }
+
+    // Automatic payment verification when student returns from UPI App (GPay/PhonePe/Paytm)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.checkPaymentStatusOnResume()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     LaunchedEffect(uiState) {
         if (uiState is CheckoutUiState.PaymentConfirmed) {
@@ -133,7 +151,7 @@ fun CheckoutScreen(
                         }
                     }
 
-                    Divider(color = SurfaceBorder, thickness = 0.8.dp)
+                    HorizontalDivider(color = SurfaceBorder, thickness = 0.8.dp)
 
                     // Specification badges
                     Row(
@@ -153,7 +171,7 @@ fun CheckoutScreen(
                         PriceRow(label = "Queue Processing & OTP Fee", value = String.format("₹%.2f", convenienceFeeRupees))
                     }
 
-                    Divider(color = SurfaceBorder, thickness = 0.8.dp)
+                    HorizontalDivider(color = SurfaceBorder, thickness = 0.8.dp)
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -304,6 +322,7 @@ fun CheckoutScreen(
                             viewModel.initiateOrderAndPay(
                                 context = context,
                                 documentId = documentId,
+                                fileName = fileName,
                                 colorMode = colorMode,
                                 paperSize = paperSize,
                                 duplexMode = duplexMode,
@@ -341,47 +360,50 @@ fun CheckoutScreen(
                     }
                 }
 
-                // Sandbox Dev Button: Simulate Payment Success
-                OutlinedButton(
-                    onClick = {
-                        if (uiState !is CheckoutUiState.OrderReady) {
-                            viewModel.initiateOrderAndPay(
-                                context = context,
-                                documentId = documentId,
-                                colorMode = colorMode,
-                                paperSize = paperSize,
-                                duplexMode = duplexMode,
-                                copies = copies,
-                                pageCount = pageCount,
-                                studentPhone = studentPhone
-                            )
-                        }
-                        viewModel.simulatePaymentSuccess()
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, StatusGreen.copy(alpha = 0.5f)),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = StatusGreen.copy(alpha = 0.08f),
-                        contentColor = StatusGreen
-                    )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Bolt,
-                        contentDescription = null,
-                        tint = StatusGreen,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Simulate Payment Success (Local Sandbox)",
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = StatusGreen
+                // Sandbox Dev Button: Simulate Payment Success (Hidden in Production Release builds)
+                if (BuildConfig.DEBUG) {
+                    OutlinedButton(
+                        onClick = {
+                            if (uiState !is CheckoutUiState.OrderReady) {
+                                viewModel.initiateOrderAndPay(
+                                    context = context,
+                                    documentId = documentId,
+                                    fileName = fileName,
+                                    colorMode = colorMode,
+                                    paperSize = paperSize,
+                                    duplexMode = duplexMode,
+                                    copies = copies,
+                                    pageCount = pageCount,
+                                    studentPhone = studentPhone
+                                )
+                            }
+                            viewModel.simulatePaymentSuccess()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, StatusGreen.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = StatusGreen.copy(alpha = 0.08f),
+                            contentColor = StatusGreen
                         )
-                    )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Bolt,
+                            contentDescription = null,
+                            tint = StatusGreen,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Simulate Payment Success (Local Sandbox)",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = StatusGreen
+                            )
+                        )
+                    }
                 }
             }
 

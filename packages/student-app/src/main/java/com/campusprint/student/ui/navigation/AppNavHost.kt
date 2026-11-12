@@ -28,6 +28,11 @@ fun AppNavHost(
                     navController.navigate(
                         Screen.Configure.createRoute(documentId, fileName, pageCount, fileSizeBytes)
                     )
+                },
+                onNavigateToTracking = { orderId, otp, totalAmountCents ->
+                    navController.navigate(
+                        Screen.Tracking.createRoute(orderId, otp, totalAmountCents)
+                    )
                 }
             )
         }

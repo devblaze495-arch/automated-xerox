@@ -697,3 +697,45 @@ export async function scanCollectOrder(
   return res.json();
 }
 
+export interface WalkInOrderPayload {
+  centerId?: string;
+  paperSize: 'A4' | 'A3';
+  sheets: number;
+  colorMode: 'BW' | 'COLOR';
+  amountCollected: number;
+  note?: string;
+}
+
+export interface WalkInOrderResponse {
+  success: boolean;
+  message: string;
+  order: {
+    id: string;
+    shortId: string;
+    totalSheets: number;
+    amountPaid: number;
+    paperSize: string;
+    colorMode: string;
+    note: string;
+  };
+}
+
+/**
+ * Quick Counter / Walk-in Customer Logging
+ */
+export async function logWalkInOrder(payload: WalkInOrderPayload): Promise<WalkInOrderResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/operator/walk-in`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const errorJson = await res.json().catch(() => ({}));
+    throw new Error(errorJson.error || errorJson.message || `Failed to log walk-in (HTTP ${res.status})`);
+  }
+
+  return res.json();
+}
+
+

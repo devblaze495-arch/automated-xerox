@@ -135,5 +135,52 @@ describe('Scan-to-Collect Counter Handover Tests', () => {
     assert.ok(order);
     assert.notEqual(order.collectionOtp, parts[2], 'Tampered OTP must not match real collectionOtp');
   });
+
+  it('correctly registers walk-in print jobs and stores COLLECTED records', () => {
+    const walkInId = '00000000-0000-0000-0000-walkinorder01';
+    const sheets = 8;
+    const amountCollected = 16.0;
+
+    const walkInOrder: EnrichedOrder = {
+      id: walkInId,
+      studentId: '00000000-0000-0000-0000-000000000001',
+      studentName: 'Walk-in Counter Customer',
+      studentPhone: '+91 Counter Cash',
+      centerId: '00000000-0000-0000-0000-000000000002',
+      status: 'COLLECTED',
+      collectionOtp: '1234',
+      totalSheets: sheets,
+      subtotalCents: Math.round(amountCollected * 100),
+      convenienceFeeCents: 0,
+      totalAmountCents: Math.round(amountCollected * 100),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      items: [
+        {
+          id: 'item-walkin-1',
+          orderId: walkInId,
+          documentId: 'doc-walkin-1',
+          documentName: 'Walk-in Resume Print',
+          totalPages: sheets,
+          pageRange: 'ALL',
+          colorMode: 'BW',
+          paperSize: 'A4',
+          duplexMode: 'SIMPLEX',
+          copies: 1,
+          computedSheets: sheets,
+          itemTotalCents: Math.round(amountCollected * 100),
+        },
+      ],
+    };
+
+    orderStore.saveOrder(walkInOrder);
+
+    const saved = orderStore.getOrder(walkInId);
+    assert.ok(saved);
+    assert.equal(saved.status, 'COLLECTED');
+    assert.equal(saved.totalSheets, 8);
+    assert.equal(saved.totalAmountCents, 1600);
+    assert.equal(saved.items[0].documentName, 'Walk-in Resume Print');
+  });
 });
 

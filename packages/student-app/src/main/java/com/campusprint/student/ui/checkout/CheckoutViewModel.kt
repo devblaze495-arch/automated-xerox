@@ -10,6 +10,8 @@ import com.campusprint.student.data.model.CreateOrderRequest
 import com.campusprint.student.data.model.CreatedOrderData
 import com.campusprint.student.data.model.OrderItemRequest
 import com.campusprint.student.data.repository.CenterRepository
+import com.campusprint.student.data.repository.OrderHistoryRepository
+import com.campusprint.student.data.repository.SavedOrderPass
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,10 +33,12 @@ class CheckoutViewModel : ViewModel() {
     val uiState: StateFlow<CheckoutUiState> = _uiState.asStateFlow()
 
     private var createdOrder: CreatedOrderData? = null
+    private var lastFileName: String = "document.pdf"
 
     fun initiateOrderAndPay(
         context: Context,
         documentId: String,
+        fileName: String,
         colorMode: String,
         paperSize: String,
         duplexMode: String,
@@ -42,6 +46,7 @@ class CheckoutViewModel : ViewModel() {
         pageCount: Int,
         studentPhone: String = ""
     ) {
+        lastFileName = fileName
         if (studentPhone.isNotBlank()) {
             CenterRepository.savePhone(studentPhone)
         }
@@ -78,6 +83,18 @@ class CheckoutViewModel : ViewModel() {
                         val amountFormatted = String.format("%.2f", order.totalAmountRupees)
                         val upiUriString = "upi://pay?pa=campusprint@upi&pn=CampusPrint&am=${amountFormatted}&cu=INR&tn=${order.orderId}"
 
+                        // Save initial pass in local history
+                        OrderHistoryRepository.savePass(
+                            SavedOrderPass(
+                                orderId = order.orderId,
+                                collectionOtp = order.collectionOtp,
+                                centerName = selectedCenter.name,
+                                fileName = fileName,
+                                totalAmountCents = order.totalAmountCents,
+                                totalSheets = order.totalSheets
+                            )
+                        )
+
                         _uiState.value = CheckoutUiState.OrderReady(order, upiUriString)
 
                         // Launch UPI App Chooser
@@ -102,8 +119,51 @@ class CheckoutViewModel : ViewModel() {
             val chooser = Intent.createChooser(intent, "Pay with UPI (GPay, PhonePe, Paytm, BHIM)")
             chooser.flags = Intent.FLAG_ACTIVITY_NEW_TASK
             context.startActivity(chooser)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Chooser exception or no apps found - keep state as OrderReady so user can simulate or retry
+        }
+    }
+
+    /**
+     * Automatically polled when student returns from the external UPI app
+     */
+    fun checkPaymentStatusOnResume() {
+        val current = createdOrder ?: return
+        if (_uiState.value is CheckoutUiState.PaymentConfirmed) return
+
+        viewModelScope.launch {
+            try {
+                val response = withContext(Dispatchers.IO) {
+                    ApiClient.getApi().getOrder(current.orderId)
+                }
+                if (response.isSuccessful && response.body()?.success == true) {
+                    val orderData = response.body()?.data
+                    if (orderData != null) {
+                        val st = orderData.status.uppercase()
+                        if (st == "PAID" || st == "PAYMENT_VERIFIED" || st == "QUEUED" ||
+                            st == "PRINTING" || st == "READY_FOR_COLLECTION" ||
+                            st == "COLLECTED" || st == "COMPLETED"
+                        ) {
+                            val selectedCenter = CenterRepository.selectedCenter.value
+                            OrderHistoryRepository.savePass(
+                                SavedOrderPass(
+                                    orderId = orderData.id,
+                                    collectionOtp = orderData.collectionOtp,
+                                    centerName = selectedCenter.name,
+                                    fileName = lastFileName,
+                                    totalAmountCents = orderData.totalAmountCents,
+                                    totalSheets = orderData.totalSheets
+                                )
+                            )
+                            _uiState.value = CheckoutUiState.PaymentConfirmed(
+                                orderId = orderData.id,
+                                otp = orderData.collectionOtp,
+                                totalAmountCents = orderData.totalAmountCents
+                            )
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
         }
     }
 
@@ -116,6 +176,18 @@ class CheckoutViewModel : ViewModel() {
                     ApiClient.getApi().confirmPayment(current.orderId)
                 }
 
+                val selectedCenter = CenterRepository.selectedCenter.value
+                OrderHistoryRepository.savePass(
+                    SavedOrderPass(
+                        orderId = current.orderId,
+                        collectionOtp = current.collectionOtp,
+                        centerName = selectedCenter.name,
+                        fileName = lastFileName,
+                        totalAmountCents = current.totalAmountCents,
+                        totalSheets = current.totalSheets
+                    )
+                )
+
                 if (response.isSuccessful && response.body()?.success == true) {
                     _uiState.value = CheckoutUiState.PaymentConfirmed(
                         orderId = current.orderId,
@@ -123,14 +195,13 @@ class CheckoutViewModel : ViewModel() {
                         totalAmountCents = current.totalAmountCents
                     )
                 } else {
-                    // Fallback to auto-confirm if simulation API returns 404/mock
                     _uiState.value = CheckoutUiState.PaymentConfirmed(
                         orderId = current.orderId,
                         otp = current.collectionOtp,
                         totalAmountCents = current.totalAmountCents
                     )
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 _uiState.value = CheckoutUiState.PaymentConfirmed(
                     orderId = current.orderId,
                     otp = current.collectionOtp,
@@ -140,4 +211,3 @@ class CheckoutViewModel : ViewModel() {
         }
     }
 }
-

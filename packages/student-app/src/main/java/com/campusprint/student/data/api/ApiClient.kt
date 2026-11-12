@@ -1,5 +1,8 @@
 package com.campusprint.student.data.api
 
+import android.content.Context
+import android.content.SharedPreferences
+import com.campusprint.student.BuildConfig
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -8,11 +11,18 @@ import java.util.concurrent.TimeUnit
 
 object ApiClient {
 
-    private const val DEFAULT_EMULATOR_URL = "http://10.0.2.2:4000/"
-    private const val DEFAULT_PHYSICAL_URL = "http://127.0.0.1:4000/"
+    private const val PREFS_NAME = "campus_print_api_prefs"
+    private const val KEY_CUSTOM_URL = "custom_base_url"
+
+    private val DEFAULT_URL: String
+        get() = if (BuildConfig.DEFAULT_API_URL.endsWith("/")) {
+            BuildConfig.DEFAULT_API_URL
+        } else {
+            "${BuildConfig.DEFAULT_API_URL}/"
+        }
 
     @Volatile
-    private var currentBaseUrl: String = DEFAULT_EMULATOR_URL
+    private var currentBaseUrl: String = DEFAULT_URL
 
     @Volatile
     private var retrofitInstance: Retrofit? = null
@@ -20,15 +30,41 @@ object ApiClient {
     @Volatile
     private var apiInstance: CampusPrintApi? = null
 
+    private var prefs: SharedPreferences? = null
+
+    fun initialize(context: Context) {
+        if (prefs == null) {
+            prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val saved = prefs?.getString(KEY_CUSTOM_URL, null)?.trim()
+            if (!saved.isNullOrBlank()) {
+                currentBaseUrl = if (!saved.endsWith("/")) "$saved/" else saved
+            } else {
+                currentBaseUrl = DEFAULT_URL
+            }
+        }
+    }
+
     fun getBaseUrl(): String = currentBaseUrl
 
+    fun getDefaultUrl(): String = DEFAULT_URL
+
     fun setBaseUrl(url: String) {
-        val normalized = if (!url.endsWith("/")) "$url/" else url
+        val trimmed = url.trim()
+        val normalized = if (trimmed.isBlank()) {
+            DEFAULT_URL
+        } else if (!trimmed.endsWith("/")) {
+            "$trimmed/"
+        } else {
+            trimmed
+        }
+
         if (currentBaseUrl != normalized) {
             currentBaseUrl = normalized
             retrofitInstance = null
             apiInstance = null
         }
+
+        prefs?.edit()?.putString(KEY_CUSTOM_URL, if (normalized == DEFAULT_URL) "" else normalized)?.apply()
     }
 
     private val okHttpClient: OkHttpClient by lazy {
@@ -55,4 +91,3 @@ object ApiClient {
         }
     }
 }
-

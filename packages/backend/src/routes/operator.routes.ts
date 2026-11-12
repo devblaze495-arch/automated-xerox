@@ -45,6 +45,15 @@ const scanCollectSchema = z.object({
   scanInput: z.string().min(1, 'Scan input is required'),
 });
 
+const walkInSchema = z.object({
+  centerId: z.string().optional().default('00000000-0000-0000-0000-000000000002'),
+  paperSize: z.enum(['A4', 'A3']).default('A4'),
+  sheets: z.number().int().positive('Sheets must be at least 1'),
+  colorMode: z.enum(['BW', 'COLOR']).default('BW'),
+  amountCollected: z.number().nonnegative('Amount collected must be non-negative'),
+  note: z.string().optional(),
+});
+
 export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   /**
    * GET /api/v1/operator/orders
@@ -373,6 +382,112 @@ export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
         totalSheets: order.totalSheets,
         amountPaid: order.totalAmountCents / 100,
         documentNames: order.items.map((i) => i.documentName),
+      },
+    });
+  });
+
+  /**
+   * POST /api/v1/operator/walk-in
+   * Quick Counter / Walk-in Customer Logging
+   * Creates a COLLECTED order record so daily revenue analytics and A4/A3 paper stock stay accurate.
+   */
+  app.post('/api/v1/operator/walk-in', async (req, reply) => {
+    const parseResult = walkInSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        error: 'Validation Error',
+        details: parseResult.error.format(),
+      });
+    }
+
+    const { centerId, paperSize, sheets, colorMode, amountCollected, note } = parseResult.data;
+    const resolvedCenterId =
+      centerId === 'CTR-CAMPUS-01' ? '00000000-0000-0000-0000-000000000002' : centerId;
+
+    const walkInId = crypto.randomUUID();
+    const otp = Math.floor(1000 + Math.random() * 9000).toString();
+    const amountCents = Math.round(amountCollected * 100);
+    const docName = note?.trim() || `Walk-in Print (${sheets} ${paperSize} ${colorMode})`;
+
+    const enrichedWalkIn: any = {
+      id: walkInId,
+      studentId: '00000000-0000-0000-0000-000000000001',
+      studentName: 'Walk-in Counter Customer',
+      studentPhone: '+91 Counter Cash',
+      centerId: resolvedCenterId,
+      status: 'COLLECTED',
+      collectionOtp: otp,
+      totalSheets: sheets,
+      subtotalCents: amountCents,
+      convenienceFeeCents: 0,
+      totalAmountCents: amountCents,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      items: [
+        {
+          id: crypto.randomUUID(),
+          orderId: walkInId,
+          documentId: crypto.randomUUID(),
+          documentName: docName,
+          totalPages: sheets,
+          pageRange: 'ALL',
+          colorMode,
+          paperSize,
+          duplexMode: 'SIMPLEX',
+          copies: 1,
+          computedSheets: sheets,
+          itemTotalCents: amountCents,
+        },
+      ],
+      payment: {
+        status: 'CAPTURED',
+        amountCents,
+        rzpPaymentId: 'cash_counter_walkin',
+      },
+    };
+
+    // Save in in-memory order store
+    orderStore.saveOrder(enrichedWalkIn);
+
+    // Sync to PostgreSQL DB for permanent ledger
+    try {
+      await prisma.order.create({
+        data: {
+          id: walkInId,
+          studentId: '00000000-0000-0000-0000-000000000001',
+          centerId: resolvedCenterId,
+          status: 'COLLECTED',
+          collectionOtp: otp,
+          totalSheets: sheets,
+          colorSheets: colorMode === 'COLOR' ? sheets : 0,
+          bwSheets: colorMode === 'BW' ? sheets : 0,
+          isDuplex: false,
+          paperSize,
+          amountPaid: amountCollected,
+          subtotalCents: amountCents,
+          convenienceFeeCents: 0,
+          totalAmountCents: amountCents,
+          collectedAt: new Date(),
+        },
+      });
+    } catch (_err) {
+      // In-memory fallback if mock
+    }
+
+    // Deduct physical paper stock
+    await AnalyticsService.deductPaperStock([{ paperSize, computedSheets: sheets }]);
+
+    return reply.send({
+      success: true,
+      message: `Walk-in print logged: ${sheets} ${paperSize} (${colorMode}) sheets, ₹${amountCollected.toFixed(2)} collected. Stock deducted.`,
+      order: {
+        id: walkInId,
+        shortId: walkInId.substring(0, 8),
+        totalSheets: sheets,
+        amountPaid: amountCollected,
+        paperSize,
+        colorMode,
+        note: docName,
       },
     });
   });

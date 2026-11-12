@@ -21,6 +21,7 @@ import {
   reRouteOrderPrinter,
   scanCollectOrder,
   ScanCollectResponse,
+  logWalkInOrder,
 } from '@/lib/api';
 import { EnrichedOperatorOrder, PrinterDevice, ConnectedAgentInfo, ShopSettings } from '@/lib/types';
 import {
@@ -49,6 +50,8 @@ import {
   ScanLine,
   Camera,
   X,
+  UserPlus,
+  Receipt,
 } from 'lucide-react';
 
 export default function OperatorDashboardPage() {
@@ -84,6 +87,24 @@ export default function OperatorDashboardPage() {
   const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false);
   const scanInputRef = React.useRef<HTMLInputElement | null>(null);
   const html5QrCodeRef = React.useRef<any>(null);
+
+  // Quick Walk-in Counter Logging state
+  const [isWalkInModalOpen, setIsWalkInModalOpen] = useState(false);
+  const [walkInPaperSize, setWalkInPaperSize] = useState<'A4' | 'A3'>('A4');
+  const [walkInColorMode, setWalkInColorMode] = useState<'BW' | 'COLOR'>('BW');
+  const [walkInSheets, setWalkInSheets] = useState(1);
+  const [walkInAmount, setWalkInAmount] = useState(2.0);
+  const [walkInNote, setWalkInNote] = useState('');
+  const [isLoggingWalkIn, setIsLoggingWalkIn] = useState(false);
+
+  // Auto-calculate walk-in estimated rate based on center rates
+  useEffect(() => {
+    if (!shopSettings) return;
+    const baseRate = walkInColorMode === 'COLOR' ? shopSettings.colorRatePerSheet : shopSettings.bwRatePerSheet;
+    const multiplier = walkInPaperSize === 'A3' ? shopSettings.a3Multiplier : 1.0;
+    const calculated = walkInSheets * baseRate * multiplier;
+    setWalkInAmount(Math.round(calculated * 100) / 100);
+  }, [walkInSheets, walkInPaperSize, walkInColorMode, shopSettings]);
 
   // Poll orders & agents every 3 seconds
   useEffect(() => {
@@ -307,6 +328,44 @@ export default function OperatorDashboardPage() {
       });
     } catch (_e) {
       // Audio playback can fail silently if user interaction is not registered yet
+    }
+  };
+
+  // Quick Walk-in Counter Logging
+  const handleLogWalkIn = async () => {
+    if (walkInSheets <= 0) {
+      alert('Sheets must be at least 1');
+      return;
+    }
+    setIsLoggingWalkIn(true);
+    try {
+      const centerId = shopSettings?.id || 'CTR-CAMPUS-01';
+      const res = await logWalkInOrder({
+        centerId,
+        paperSize: walkInPaperSize,
+        sheets: walkInSheets,
+        colorMode: walkInColorMode,
+        amountCollected: walkInAmount,
+        note: walkInNote || undefined,
+      });
+
+      playSuccessChime();
+      setIsWalkInModalOpen(false);
+      setWalkInNote('');
+      setWalkInSheets(1);
+
+      setDispatchFeedback(`✅ ${res.message}`);
+
+      const [freshOrders, freshSettings] = await Promise.all([
+        getOperatorOrders(),
+        getShopSettings().catch(() => null),
+      ]);
+      setOrders(freshOrders);
+      if (freshSettings) setShopSettings(freshSettings);
+    } catch (err: any) {
+      alert(err.message || 'Failed to log walk-in order');
+    } finally {
+      setIsLoggingWalkIn(false);
     }
   };
 
@@ -534,6 +593,17 @@ export default function OperatorDashboardPage() {
             >
               <Sliders className="h-4 w-4 text-blue-400" />
               <span>Rates & Stock</span>
+            </button>
+
+            {/* Quick Walk-in Log Button */}
+            <button
+              type="button"
+              onClick={() => setIsWalkInModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-bold transition-all shadow-sm"
+              title="Log cash counter or pen-drive walk-in print"
+            >
+              <UserPlus className="h-4 w-4 text-emerald-400" />
+              <span>+ Log Walk-in</span>
             </button>
 
             {/* Quick Dispatch Button */}
@@ -1329,6 +1399,170 @@ export default function OperatorDashboardPage() {
                 className="px-4 py-2 rounded-xl text-xs font-semibold bg-surface-elevated hover:bg-surface-border text-slate-300 transition-colors"
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Walk-in Customer Logging Modal */}
+      {isWalkInModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-md rounded-2xl bg-surface-card border border-surface-border shadow-2xl p-6 overflow-hidden space-y-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400">
+                  <UserPlus className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Log Walk-in Customer</h3>
+                  <p className="text-[11px] text-slate-400">Counter / Pen-drive print job</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsWalkInModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-surface-elevated transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Paper Size & Color Mode Selectors */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-400 block mb-1.5">
+                    Paper Size
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-surface-dark border border-surface-border">
+                    <button
+                      type="button"
+                      onClick={() => setWalkInPaperSize('A4')}
+                      className={`py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        walkInPaperSize === 'A4'
+                          ? 'bg-brand-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      A4
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWalkInPaperSize('A3')}
+                      className={`py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        walkInPaperSize === 'A3'
+                          ? 'bg-brand-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      A3
+                    </button>
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Stock: {walkInPaperSize === 'A3' ? (shopSettings?.paperStockA3 ?? 0) : (shopSettings?.paperStockA4 ?? 0)} left
+                  </span>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-400 block mb-1.5">
+                    Color Mode
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-surface-dark border border-surface-border">
+                    <button
+                      type="button"
+                      onClick={() => setWalkInColorMode('BW')}
+                      className={`py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        walkInColorMode === 'BW'
+                          ? 'bg-slate-700 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      B&W
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWalkInColorMode('COLOR')}
+                      className={`py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        walkInColorMode === 'COLOR'
+                          ? 'bg-brand-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Color
+                    </button>
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Rate: ₹{walkInColorMode === 'COLOR' ? (shopSettings?.colorRatePerSheet ?? 10) : (shopSettings?.bwRatePerSheet ?? 2)}/sheet
+                  </span>
+                </div>
+              </div>
+
+              {/* Sheets and Amount Inputs */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-400 block mb-1.5">
+                    Sheets Printed
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={walkInSheets}
+                    onChange={(e) => setWalkInSheets(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-full px-3 py-2 rounded-xl bg-surface-dark border border-surface-border text-white text-sm font-mono focus:outline-none focus:border-brand-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-400 block mb-1.5">
+                    Amount Collected (₹)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    value={walkInAmount}
+                    onChange={(e) => setWalkInAmount(parseFloat(e.target.value) || 0)}
+                    className="w-full px-3 py-2 rounded-xl bg-surface-dark border border-surface-border text-emerald-400 font-bold text-sm font-mono focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
+
+              {/* Note / Customer description */}
+              <div>
+                <label className="text-[11px] font-semibold text-slate-400 block mb-1.5">
+                  Job Description / Note (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Pen-drive resume print, 2x spiral bind"
+                  value={walkInNote}
+                  onChange={(e) => setWalkInNote(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-surface-dark border border-surface-border text-white text-xs placeholder-slate-500 focus:outline-none focus:border-brand-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsWalkInModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-surface-border text-slate-300 hover:text-white text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleLogWalkIn}
+                disabled={isLoggingWalkIn}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md disabled:opacity-50 transition-all"
+              >
+                {isLoggingWalkIn ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Check className="h-3.5 w-3.5" />
+                )}
+                <span>Log & Deduct Stock</span>
               </button>
             </div>
           </div>

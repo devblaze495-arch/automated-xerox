@@ -6,7 +6,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -17,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -24,14 +28,21 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.campusprint.student.data.api.ApiClient
 import com.campusprint.student.data.model.PrintCenter
 import com.campusprint.student.data.repository.CenterRepository
+import com.campusprint.student.data.repository.OrderHistoryRepository
+import com.campusprint.student.data.repository.SavedOrderPass
 import com.campusprint.student.ui.theme.*
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UploadScreen(
     onNavigateToConfigure: (documentId: String, fileName: String, pageCount: Int, fileSizeBytes: Long) -> Unit,
+    onNavigateToTracking: (orderId: String, collectionOtp: String, totalAmountCents: Long) -> Unit = { _, _, _ -> },
     viewModel: UploadViewModel = viewModel()
 ) {
     val context = LocalContext.current
@@ -40,6 +51,9 @@ fun UploadScreen(
     val availableCenters by CenterRepository.availableCenters.collectAsState()
     var showCenterDialog by remember { mutableStateOf(false) }
     var showQrDialog by remember { mutableStateOf(false) }
+    var showServerConfigDialog by remember { mutableStateOf(false) }
+    var showPassesSheet by remember { mutableStateOf(false) }
+    val savedPasses by OrderHistoryRepository.savedPasses.collectAsState()
 
     LaunchedEffect(Unit) {
         CenterRepository.refreshCenters()
@@ -66,7 +80,20 @@ fun UploadScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onLongPress = {
+                                        showServerConfigDialog = true
+                                    }
+                                )
+                            }
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
                         Box(
                             modifier = Modifier
                                 .size(36.dp)
@@ -112,6 +139,31 @@ fun UploadScreen(
                                 style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, fontSize = 11.sp)
                             )
                         }
+                    }
+                },
+                actions = {
+                    FilledTonalButton(
+                        onClick = { showPassesSheet = true },
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = SurfaceCard,
+                            contentColor = BrandAccent
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.padding(end = 12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ReceiptLong,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = BrandAccent
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "My Passes",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BackgroundDark)
@@ -569,6 +621,219 @@ fun UploadScreen(
             onDismiss = { showQrDialog = false }
         )
     }
+
+    if (showPassesSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showPassesSheet = false },
+            containerColor = SurfaceDark,
+            dragHandle = {
+                Box(
+                    modifier = Modifier
+                        .padding(vertical = 12.dp)
+                        .width(44.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(SurfaceBorder)
+                )
+            }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "My Active Passes",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                        Text(
+                            text = "Instant QR Tickets & Pickup Passes",
+                            style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary)
+                        )
+                    }
+
+                    if (savedPasses.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(BrandPrimary.copy(alpha = 0.2f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "${savedPasses.size} saved",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = BrandAccent,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+                    }
+                }
+
+                if (savedPasses.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(SurfaceCard)
+                            .border(1.dp, SurfaceBorder, RoundedCornerShape(16.dp))
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ConfirmationNumber,
+                                contentDescription = null,
+                                tint = TextSecondary,
+                                modifier = Modifier.size(36.dp)
+                            )
+                            Text(
+                                text = "No active passes yet",
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    color = TextPrimary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                            Text(
+                                text = "Place an order to generate your instant QR ticket and counter pickup OTP.",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = TextSecondary,
+                                    textAlign = TextAlign.Center
+                                )
+                            )
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(savedPasses) { pass ->
+                            val formattedDate = remember(pass.createdAt) {
+                                SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(pass.createdAt))
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(SurfaceCard)
+                                    .border(1.dp, SurfaceBorder, RoundedCornerShape(16.dp))
+                                    .clickable {
+                                        showPassesSheet = false
+                                        onNavigateToTracking(pass.orderId, pass.collectionOtp, pass.totalAmountCents)
+                                    }
+                                    .padding(14.dp)
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = pass.fileName,
+                                            style = MaterialTheme.typography.titleSmall.copy(
+                                                color = TextPrimary,
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            maxLines = 1,
+                                            modifier = Modifier.weight(1f)
+                                        )
+
+                                        Spacer(modifier = Modifier.width(8.dp))
+
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(StatusGreen.copy(alpha = 0.15f))
+                                                .border(1.dp, StatusGreen.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "OTP ${pass.collectionOtp}",
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    color = StatusGreen,
+                                                    fontWeight = FontWeight.Black,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontSize = 11.sp
+                                                )
+                                            )
+                                        }
+                                    }
+
+                                    Text(
+                                        text = pass.centerName,
+                                        style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary),
+                                        maxLines = 1
+                                    )
+
+                                    HorizontalDivider(color = SurfaceBorder, thickness = 0.6.dp)
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = formattedDate,
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                color = TextSecondary,
+                                                fontSize = 11.sp
+                                            )
+                                        )
+
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "${pass.totalSheets} ${if (pass.totalSheets > 1) "Sheets" else "Sheet"} • ₹${String.format("%.2f", pass.totalAmountRupees)}",
+                                                style = MaterialTheme.typography.labelMedium.copy(
+                                                    color = BrandAccent,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Default.ChevronRight,
+                                                contentDescription = null,
+                                                tint = BrandAccent,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showServerConfigDialog) {
+        ServerConfigDialog(
+            currentUrl = ApiClient.getBaseUrl(),
+            onDismiss = { showServerConfigDialog = false },
+            onSave = { newUrl ->
+                ApiClient.setBaseUrl(newUrl)
+                showServerConfigDialog = false
+            }
+        )
+    }
 }
 
 @Composable
@@ -802,6 +1067,86 @@ private fun QrScannerDialog(
                 enabled = rawInput.isNotBlank()
             ) {
                 Text("Select Station", color = Color.White)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = TextSecondary)
+            }
+        }
+    )
+}
+
+@Composable
+private fun ServerConfigDialog(
+    currentUrl: String,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var urlText by remember { mutableStateOf(currentUrl) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceDark,
+        titleContentColor = TextPrimary,
+        textContentColor = TextSecondary,
+        title = {
+            Text(text = "Configure Backend Gateway")
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Select or enter the Fastify API Gateway URL:",
+                    style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary)
+                )
+
+                OutlinedTextField(
+                    value = urlText,
+                    onValueChange = { urlText = it },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = BrandPrimary,
+                        unfocusedBorderColor = SurfaceBorder,
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = urlText.contains("api.campusprint.in"),
+                        onClick = { urlText = "https://api.campusprint.in" },
+                        label = { Text("Cloud (api.campusprint.in)", fontSize = 11.sp) }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = urlText.contains("10.0.2.2"),
+                        onClick = { urlText = "http://10.0.2.2:4000/" },
+                        label = { Text("Emulator (10.0.2.2)", fontSize = 11.sp) }
+                    )
+                    FilterChip(
+                        selected = urlText.contains("127.0.0.1"),
+                        onClick = { urlText = "http://127.0.0.1:4000/" },
+                        label = { Text("ADB Reverse (127.0.0.1)", fontSize = 11.sp) }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(urlText) },
+                colors = ButtonDefaults.buttonColors(containerColor = BrandPrimary)
+            ) {
+                Text("Save", color = Color.White)
             }
         },
         dismissButton = {

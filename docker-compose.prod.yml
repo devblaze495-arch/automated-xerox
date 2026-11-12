@@ -14,7 +14,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./scripts/init-postgres-dbs.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test: [ "CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -28,11 +28,11 @@ services:
     image: redis:7-alpine
     container_name: campus-print-redis-prod
     restart: always
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Redis password required}"]
+    command: [ "redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?Redis password required}" ]
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -59,7 +59,7 @@ services:
       DB_PORT: 5432
       DB_DATABASE: upi_gateway_db
       DB_USERNAME: ${POSTGRES_USER:-postgres}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_PASSWORD: blaze
       GATEWAY_WEBHOOK_ALLOW_INSECURE: ${GATEWAY_WEBHOOK_ALLOW_INSECURE:-false}
       GATEWAY_ALLOW_INSECURE_REDIRECTS: ${GATEWAY_ALLOW_INSECURE_REDIRECTS:-false}
     depends_on:
@@ -181,4 +181,3 @@ networks:
     driver: bridge
   web_traffic:
     driver: bridge
-
