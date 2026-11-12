@@ -661,3 +661,39 @@ export async function extendCenterSubscription(
   }
   return res.json();
 }
+
+export interface ScanCollectResponse {
+  success: boolean;
+  message: string;
+  purgedCount?: number;
+  order: {
+    id: string;
+    shortId: string;
+    studentName: string;
+    totalSheets: number;
+    amountPaid: number;
+    documentNames: string[];
+  };
+}
+
+/**
+ * Instant Counter Handover via USB Scanner wedge or Webcam QR scanner
+ */
+export async function scanCollectOrder(
+  centerId: string,
+  scanInput: string
+): Promise<ScanCollectResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/operator/orders/scan-collect`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ centerId, scanInput }),
+  });
+
+  if (!res.ok) {
+    const errorJson = await res.json().catch(() => ({}));
+    throw new Error(errorJson.error || errorJson.message || `Scan collect failed (HTTP ${res.status})`);
+  }
+
+  return res.json();
+}
+

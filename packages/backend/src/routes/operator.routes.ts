@@ -40,6 +40,11 @@ const reroutePrinterSchema = z.object({
   targetPrinterName: z.string().min(1, 'Target printer name is required'),
 });
 
+const scanCollectSchema = z.object({
+  centerId: z.string().optional().default('00000000-0000-0000-0000-000000000002'),
+  scanInput: z.string().min(1, 'Scan input is required'),
+});
+
 export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   /**
    * GET /api/v1/operator/orders
@@ -251,6 +256,124 @@ export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
         }`,
       order: updated,
       purgedCount,
+    });
+  });
+
+  /**
+   * POST /api/v1/operator/orders/scan-collect
+   * Instant Counter Handover via USB Scanner wedge or Webcam QR scanner
+   * Accepts:
+   *   Format A: CAMPUSPRINT_PICKUP:<orderId>:<pickupOtp>
+   *   Format B: <4-digit-otp>
+   */
+  app.post('/api/v1/operator/orders/scan-collect', async (req, reply) => {
+    const parseResult = scanCollectSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        error: 'Validation Error',
+        details: parseResult.error.format(),
+      });
+    }
+
+    const { centerId, scanInput: rawInput } = parseResult.data;
+    const input = rawInput.trim();
+
+    let targetOrderId: string | null = null;
+    let expectedOtp: string | null = null;
+
+    if (input.startsWith('CAMPUSPRINT_PICKUP:')) {
+      // Format A: CAMPUSPRINT_PICKUP:<orderId>:<pickupOtp>
+      const parts = input.split(':');
+      if (parts.length < 3) {
+        return reply.status(400).send({
+          error: 'Invalid QR Ticket Format. Expected CAMPUSPRINT_PICKUP:<orderId>:<pickupOtp>',
+        });
+      }
+      targetOrderId = parts[1];
+      expectedOtp = parts[2];
+    } else if (/^\d{4}$/.test(input)) {
+      // Format B: Raw 4-digit OTP
+      expectedOtp = input;
+      // Search active orders in orderStore
+      const allOrders = orderStore.getAllOrders();
+      const match = allOrders.find(
+        (o) =>
+          o.collectionOtp === input &&
+          o.status !== 'COLLECTED' &&
+          o.status !== 'COMPLETED' &&
+          o.status !== 'REFUNDED' &&
+          (o.centerId === centerId ||
+            o.centerId === 'CTR-CAMPUS-01' ||
+            centerId === 'CTR-CAMPUS-01' ||
+            centerId === '00000000-0000-0000-0000-000000000002')
+      );
+
+      if (!match) {
+        const alreadyCollected = allOrders.find(
+          (o) => o.collectionOtp === input && (o.status === 'COLLECTED' || o.status === 'COMPLETED')
+        );
+        if (alreadyCollected) {
+          return reply.status(400).send({ error: 'Order has already been collected' });
+        }
+        return reply.status(404).send({ error: `No active order found with OTP: ${input}` });
+      }
+
+      targetOrderId = match.id;
+    } else {
+      return reply.status(400).send({
+        error: 'Unrecognized barcode format. Expected CAMPUSPRINT_PICKUP QR or 4-digit OTP.',
+      });
+    }
+
+    const order = orderStore.getOrder(targetOrderId);
+    if (!order) {
+      return reply.status(404).send({ error: 'Order not found for scanned ticket' });
+    }
+
+    // Check if already collected
+    if (order.status === 'COLLECTED' || order.status === 'COMPLETED') {
+      return reply.status(400).send({ error: 'Order has already been collected' });
+    }
+
+    // Validate OTP if provided in Format A
+    if (expectedOtp && order.collectionOtp !== expectedOtp) {
+      return reply.status(400).send({
+        error: `Invalid Pickup OTP in ticket! Expected ${order.collectionOtp}, received ${expectedOtp}`,
+      });
+    }
+
+    // Update order state
+    const updated = orderStore.updateStatus(order.id, 'COLLECTED');
+
+    // Sync to PostgreSQL
+    try {
+      await prisma.order.update({
+        where: { id: order.id },
+        data: {
+          status: 'COLLECTED',
+          collectedAt: new Date(),
+        },
+      });
+    } catch (_err) {}
+
+    // Auto-purge document files for privacy if configured
+    const purgedCount = await AnalyticsService.autoPurgeOrderDocuments(order.id);
+
+    // Deduct physical paper stock
+    await AnalyticsService.deductPaperStock(order.items);
+
+    return reply.send({
+      success: true,
+      message: `Pickup confirmed! Order #${order.id.substring(0, 8)} successfully handed over.`,
+      purgedCount,
+      order: {
+        id: order.id,
+        shortId: order.id.substring(0, 8),
+        studentName: order.studentName || 'Student',
+        totalSheets: order.totalSheets,
+        amountPaid: order.totalAmountCents / 100,
+        documentNames: order.items.map((i) => i.documentName),
+      },
     });
   });
 

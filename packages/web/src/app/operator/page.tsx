@@ -19,6 +19,8 @@ import {
   toggleSpoolerPause,
   bumpOrderPriority,
   reRouteOrderPrinter,
+  scanCollectOrder,
+  ScanCollectResponse,
 } from '@/lib/api';
 import { EnrichedOperatorOrder, PrinterDevice, ConnectedAgentInfo, ShopSettings } from '@/lib/types';
 import {
@@ -44,6 +46,9 @@ import {
   Sliders,
   Store,
   QrCode,
+  ScanLine,
+  Camera,
+  X,
 } from 'lucide-react';
 
 export default function OperatorDashboardPage() {
@@ -70,6 +75,15 @@ export default function OperatorDashboardPage() {
   const [isTogglingPause, setIsTogglingPause] = useState(false);
   const [bumpingOrderId, setBumpingOrderId] = useState<string | null>(null);
   const isSpoolerPaused = shopSettings?.isSpoolerPaused ?? false;
+
+  // Instant Counter Scanner & Handover state
+  const [scanInput, setScanInput] = useState('');
+  const [isProcessingScan, setIsProcessingScan] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [lastCollectedOrder, setLastCollectedOrder] = useState<ScanCollectResponse['order'] | null>(null);
+  const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false);
+  const scanInputRef = React.useRef<HTMLInputElement | null>(null);
+  const html5QrCodeRef = React.useRef<any>(null);
 
   // Poll orders & agents every 3 seconds
   useEffect(() => {
@@ -268,6 +282,154 @@ export default function OperatorDashboardPage() {
     }
   };
 
+  // Synthesizes a pleasant ascending audio chime upon verified pickup handover
+  const playSuccessChime = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const notes = [523.25, 659.25, 783.99]; // C5, E5, G5 major triad
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.08);
+
+        gain.gain.setValueAtTime(0, ctx.currentTime + idx * 0.08);
+        gain.gain.linearRampToValueAtTime(0.2, ctx.currentTime + idx * 0.08 + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.08 + 0.35);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(ctx.currentTime + idx * 0.08);
+        osc.stop(ctx.currentTime + idx * 0.08 + 0.36);
+      });
+    } catch (_e) {
+      // Audio playback can fail silently if user interaction is not registered yet
+    }
+  };
+
+  // Keyboard shortcut '/' to auto-focus counter scan bar
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.key === '/' &&
+        document.activeElement !== scanInputRef.current &&
+        document.activeElement?.tagName !== 'INPUT' &&
+        document.activeElement?.tagName !== 'TEXTAREA'
+      ) {
+        e.preventDefault();
+        scanInputRef.current?.focus();
+        scanInputRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Instant Counter Scan Collection Handler
+  const executeScanCollect = async (raw?: string) => {
+    const input = (raw !== undefined ? raw : scanInput).trim();
+    if (!input || isProcessingScan) return;
+
+    setIsProcessingScan(true);
+    setScanError(null);
+
+    try {
+      const centerId = shopSettings?.id || 'CTR-CAMPUS-01';
+      const result = await scanCollectOrder(centerId, input);
+
+      playSuccessChime();
+      setLastCollectedOrder(result.order);
+      setScanInput('');
+
+      // Auto-dismiss handover celebration after 4 seconds
+      setTimeout(() => {
+        setLastCollectedOrder((current) => (current?.id === result.order.id ? null : current));
+      }, 4000);
+
+      const freshOrders = await getOperatorOrders();
+      setOrders(freshOrders);
+    } catch (err: any) {
+      setScanError(err.message || 'Scan verification failed. Check OTP or QR.');
+    } finally {
+      setIsProcessingScan(false);
+    }
+  };
+
+  const handleScanInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setScanInput(val);
+    setScanError(null);
+
+    // If a full QR payload is typed/pasted by USB scanner wedge, auto-submit immediately!
+    if (val.startsWith('CAMPUSPRINT_PICKUP:') && val.split(':').length >= 3) {
+      executeScanCollect(val);
+    }
+  };
+
+  const handleScanKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      executeScanCollect();
+    }
+  };
+
+  // Webcam QR scanner modal lifecycle with html5-qrcode
+  useEffect(() => {
+    if (!isCameraScannerOpen) return;
+
+    let qrScanner: any = null;
+    let isCancelled = false;
+
+    async function startScanner() {
+      try {
+        const { Html5Qrcode } = await import('html5-qrcode');
+        if (isCancelled) return;
+        qrScanner = new Html5Qrcode('camera-reader');
+        html5QrCodeRef.current = qrScanner;
+
+        await qrScanner.start(
+          { facingMode: 'environment' },
+          {
+            fps: 10,
+            qrbox: { width: 250, height: 250 },
+          },
+          (decodedText: string) => {
+            if (qrScanner?.isScanning) {
+              qrScanner
+                .stop()
+                .catch(() => {})
+                .finally(() => {
+                  setIsCameraScannerOpen(false);
+                  executeScanCollect(decodedText);
+                });
+            }
+          },
+          () => {}
+        );
+      } catch (err: any) {
+        setScanError(`Camera error: ${err.message || 'Unable to access camera'}`);
+        setIsCameraScannerOpen(false);
+      }
+    }
+
+    startScanner();
+
+    return () => {
+      isCancelled = true;
+      if (qrScanner && qrScanner.isScanning) {
+        qrScanner
+          .stop()
+          .catch(() => {})
+          .finally(() => {
+            qrScanner.clear();
+          });
+      }
+    };
+  }, [isCameraScannerOpen]);
+
   // Filtered queue
   const filteredOrders = orders.filter((order) => {
     const matchesFilter =
@@ -403,6 +565,104 @@ export default function OperatorDashboardPage() {
             </button>
           </div>
         )}
+
+        {/* Handover Celebration Toast Banner (4-second auto-dismiss) */}
+        {lastCollectedOrder && (
+          <div className="relative overflow-hidden p-5 rounded-2xl bg-gradient-to-r from-emerald-950/90 via-emerald-900/70 to-emerald-950/90 border-2 border-emerald-500 shadow-2xl shadow-emerald-950/60 flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div className="flex items-center gap-4">
+              <div className="h-12 w-12 rounded-xl bg-emerald-500 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/30">
+                <CheckCircle2 className="h-7 w-7 text-slate-950 stroke-[2.5]" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 bg-emerald-500/20 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
+                    Verified Pickup Handover
+                  </span>
+                  <span className="text-xs text-slate-400 font-mono">
+                    Order #{lastCollectedOrder.shortId}
+                  </span>
+                </div>
+                <h3 className="text-lg font-black text-white mt-0.5">
+                  Handed over to <span className="text-emerald-300">{lastCollectedOrder.studentName}</span>
+                </h3>
+                <p className="text-xs text-emerald-200/80 mt-0.5">
+                  {lastCollectedOrder.totalSheets} sheets printed · ₹{lastCollectedOrder.amountPaid.toFixed(2)} collected · Auto-purged document privacy data
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setLastCollectedOrder(null)}
+              className="p-2 rounded-xl hover:bg-emerald-800/40 text-slate-400 hover:text-white transition-all shrink-0"
+              title="Dismiss"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        )}
+
+        {/* Instant Counter Scan Bar (USB Wedge + 4-Digit OTP + Camera Scanner) */}
+        <div className="rounded-2xl border border-surface-border bg-surface-card p-4 shadow-xl">
+          <div className="flex flex-col sm:flex-row items-center gap-3">
+            <div className="relative flex-1 w-full">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <ScanLine className="h-5 w-5 text-brand-400" />
+              </div>
+              <input
+                ref={scanInputRef}
+                type="text"
+                value={scanInput}
+                onChange={handleScanInputChange}
+                onKeyDown={handleScanKeyDown}
+                placeholder="Scan Student QR Ticket or Enter 4-Digit OTP... (Press / to focus)"
+                disabled={isProcessingScan}
+                className="w-full pl-11 pr-28 py-3 rounded-xl bg-surface-dark border border-surface-border text-white placeholder-slate-500 font-mono text-sm sm:text-base focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all"
+              />
+              <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center gap-1.5">
+                <kbd className="hidden sm:inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold text-slate-400 bg-surface-elevated border border-surface-border rounded shadow-sm">
+                  /
+                </kbd>
+                <button
+                  type="button"
+                  onClick={() => executeScanCollect()}
+                  disabled={!scanInput.trim() || isProcessingScan}
+                  className="px-3 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-500 disabled:opacity-40 disabled:hover:bg-brand-600 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1"
+                >
+                  {isProcessingScan ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5" />
+                  )}
+                  <span>Handover</span>
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setIsCameraScannerOpen(true)}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-surface-border bg-surface-elevated hover:bg-surface-elevated/80 text-slate-200 hover:text-white text-xs sm:text-sm font-semibold transition-all shrink-0 shadow-sm"
+              title="Open Webcam to scan student screen"
+            >
+              <Camera className="h-4 w-4 text-emerald-400" />
+              <span>Scan via Camera</span>
+            </button>
+          </div>
+
+          {scanError && (
+            <div className="mt-2.5 px-3 py-2 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                <span>{scanError}</span>
+              </div>
+              <button
+                onClick={() => setScanError(null)}
+                className="text-rose-400/80 hover:text-rose-300 font-bold ml-2"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Hardware Status Banner & Printer Control Bar */}
         <div className="space-y-4">
@@ -1029,6 +1289,46 @@ export default function OperatorDashboardPage() {
                   <Check className="h-3.5 w-3.5" />
                 )}
                 Save Configuration
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Webcam QR Scanner Viewfinder Modal */}
+      {isCameraScannerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-md rounded-2xl bg-surface-card border border-surface-border shadow-2xl p-6 overflow-hidden">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Camera className="h-5 w-5 text-emerald-400" />
+                <h3 className="text-base font-bold text-white">Scan Student QR Code</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCameraScannerOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-surface-elevated transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-4">
+              Hold the student's phone screen up to the camera. The scanner will automatically detect the pickup pass and complete the handover.
+            </p>
+
+            {/* html5-qrcode target container */}
+            <div className="overflow-hidden rounded-xl bg-black border border-surface-border relative">
+              <div id="camera-reader" className="w-full min-h-[280px]" />
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsCameraScannerOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-surface-elevated hover:bg-surface-border text-slate-300 transition-colors"
+              >
+                Cancel
               </button>
             </div>
           </div>

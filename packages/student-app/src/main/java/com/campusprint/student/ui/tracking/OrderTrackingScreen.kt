@@ -2,6 +2,7 @@ package com.campusprint.student.ui.tracking
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -24,6 +25,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.campusprint.student.ui.components.rememberQrBitmap
 import com.campusprint.student.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -50,6 +52,10 @@ fun OrderTrackingScreen(
         "COLLECTED", "COMPLETED" -> 5
         else -> 2
     }
+
+    val qrPayload = "CAMPUSPRINT_PICKUP:${orderId}:${uiState.collectionOtp}"
+    val qrBitmap = rememberQrBitmap(qrPayload, 512)
+    val spacedOtp = uiState.collectionOtp.chunked(1).joinToString(" ")
 
     Scaffold(
         containerColor = BackgroundDark,
@@ -124,7 +130,7 @@ fun OrderTrackingScreen(
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // Hero Pickup OTP Card
+            // Hero Pickup Pass Card (Scannable QR + Spaced OTP)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -147,7 +153,7 @@ fun OrderTrackingScreen(
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Box(
                         modifier = Modifier
@@ -155,46 +161,70 @@ fun OrderTrackingScreen(
                             .background(
                                 if (currentStep >= 4) StatusGreen.copy(alpha = 0.15f) else BrandPrimary.copy(alpha = 0.15f)
                             )
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         Text(
                             text = if (currentStep >= 4) "READY FOR PHYSICAL HANDOVER" else "COLLECTION VERIFICATION PASS",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = if (currentStep >= 4) StatusGreen else BrandAccent,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 10.sp,
+                                fontSize = 11.sp,
                                 letterSpacing = 1.sp
                             )
                         )
                     }
 
+                    // Scannable High-Contrast White Container for QR
+                    Box(
+                        modifier = Modifier
+                            .size(216.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.White)
+                            .padding(10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (qrBitmap != null) {
+                            Image(
+                                bitmap = qrBitmap,
+                                contentDescription = "Pickup QR Ticket",
+                                modifier = Modifier.size(196.dp)
+                            )
+                        } else {
+                            CircularProgressIndicator(
+                                color = BrandPrimary,
+                                modifier = Modifier.size(40.dp)
+                            )
+                        }
+                    }
+
                     Text(
                         text = "Pickup OTP",
                         style = MaterialTheme.typography.bodySmall.copy(
-                            color = TextSecondary
+                            color = TextSecondary,
+                            fontWeight = FontWeight.Medium
                         )
                     )
 
-                    // 4-Digit OTP Hero Text
+                    // 4-Digit OTP Hero Text (Spaced)
                     Text(
-                        text = uiState.collectionOtp,
+                        text = if (spacedOtp.isNotBlank()) spacedOtp else "· · · ·",
                         style = MaterialTheme.typography.headlineLarge.copy(
                             color = if (currentStep >= 4) StatusGreen else TextPrimary,
                             fontWeight = FontWeight.Black,
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 44.sp,
-                            letterSpacing = 10.sp
+                            fontSize = 38.sp,
+                            letterSpacing = 8.sp
                         )
                     )
 
                     Text(
-                        text = "Show this 4-digit code at the Xerox counter to pick up your prints.",
+                        text = "Flash this QR at the counter scanner or tell the 4-digit OTP",
                         style = MaterialTheme.typography.bodySmall.copy(
                             color = TextSecondary,
                             textAlign = TextAlign.Center,
                             lineHeight = 16.sp
                         ),
-                        modifier = Modifier.padding(horizontal = 16.dp)
+                        modifier = Modifier.padding(horizontal = 12.dp)
                     )
                 }
             }

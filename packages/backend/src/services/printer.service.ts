@@ -162,7 +162,7 @@ class PrinterService {
             portName: dp.portName || existing?.portName || 'USB001',
             connectionType: dp.connectionType as any,
             capabilities: caps,
-            isOnline: dp.isOnline,
+            isOnline: existing !== undefined ? existing.isOnline : dp.isOnline,
             isActive: dp.isActive,
             centerId: dp.centerId,
             currentQueueCount: existing?.currentQueueCount || 0,
