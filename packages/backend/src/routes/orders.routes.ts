@@ -21,6 +21,7 @@ const createOrderSchema = z.object({
   studentId: z.string().optional().default('00000000-0000-0000-0000-000000000001'),
   centerId: z.string().optional().default('00000000-0000-0000-0000-000000000002'),
   items: z.array(orderItemInputSchema).min(1, 'Order must contain at least one item'),
+  studentPhone: z.string().optional(),
 });
 
 export const orderRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
@@ -37,7 +38,7 @@ export const orderRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       });
     }
 
-    const { studentId, centerId, items } = parseResult.data;
+    const { studentId, centerId, items, studentPhone } = parseResult.data;
 
     // 1. Generate 4-digit collection OTP
     const collectionOtp = Math.floor(1000 + Math.random() * 9000).toString();
@@ -45,6 +46,10 @@ export const orderRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     // 2. Compute exact pricing for each item
     let totalSheets = 0;
     let subtotalCents = 0;
+    let colorSheets = 0;
+    let bwSheets = 0;
+    let isDuplex = false;
+    let dominantPaperSize: 'A4' | 'A3' = 'A4';
 
     const computedItems = items.map((item) => {
       const calc = calculateItemPrice({
@@ -58,6 +63,18 @@ export const orderRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       totalSheets += calc.totalSheets;
       subtotalCents += calc.itemTotalCents;
+
+      if (item.colorMode === 'COLOR') {
+        colorSheets += calc.totalSheets;
+      } else {
+        bwSheets += calc.totalSheets;
+      }
+      if (item.duplexMode !== 'SIMPLEX') {
+        isDuplex = true;
+      }
+      if (item.paperSize === 'A3') {
+        dominantPaperSize = 'A3';
+      }
 
       return {
         ...item,
@@ -75,7 +92,7 @@ export const orderRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       id: orderId,
       studentId,
       studentName: 'Campus Student',
-      studentPhone: '+91 98765 43210',
+      studentPhone: studentPhone || '+91 98765 43210',
       centerId,
       status: 'PAYMENT_PENDING',
       collectionOtp,
@@ -117,6 +134,11 @@ export const orderRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
           status: 'PAYMENT_PENDING',
           collectionOtp,
           totalSheets,
+          colorSheets,
+          bwSheets,
+          isDuplex,
+          paperSize: dominantPaperSize,
+          amountPaid: totalAmountCents / 100,
           subtotalCents,
           convenienceFeeCents,
           totalAmountCents,

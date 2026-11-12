@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Navbar } from '@/components/Navbar';
 import { SubscriptionGate } from '@/components/SubscriptionGate';
 import {
@@ -13,8 +14,10 @@ import {
   togglePrinter,
   triggerTestDispatch,
   getConnectedAgents,
+  getShopSettings,
+  updateShopSettings,
 } from '@/lib/api';
-import { EnrichedOperatorOrder, PrinterDevice, ConnectedAgentInfo } from '@/lib/types';
+import { EnrichedOperatorOrder, PrinterDevice, ConnectedAgentInfo, ShopSettings } from '@/lib/types';
 import {
   Printer,
   Smartphone,
@@ -32,6 +35,10 @@ import {
   XCircle,
   Layers,
   Sparkles,
+  BarChart3,
+  Sliders,
+  Store,
+  QrCode,
 } from 'lucide-react';
 
 export default function OperatorDashboardPage() {
@@ -48,16 +55,23 @@ export default function OperatorDashboardPage() {
   const [selectedPrinters, setSelectedPrinters] = useState<{ [orderId: string]: string }>({});
   const [togglingPrinterId, setTogglingPrinterId] = useState<string | null>(null);
 
+  // Shop settings & rates
+  const [shopSettings, setShopSettings] = useState<ShopSettings | null>(null);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [settingsForm, setSettingsForm] = useState<Partial<ShopSettings>>({});
+
   // Poll orders & agents every 3 seconds
   useEffect(() => {
     let isMounted = true;
 
     async function loadData() {
       try {
-        const [ordersData, printersData, agentsData] = await Promise.all([
+        const [ordersData, printersData, agentsData, settingsData] = await Promise.all([
           getOperatorOrders().catch(() => []),
           getPrinters().catch(() => []),
           getConnectedAgents().catch(() => ({ totalConnected: 0, agents: [] })),
+          getShopSettings().catch(() => null),
         ]);
 
         if (isMounted) {
@@ -66,6 +80,9 @@ export default function OperatorDashboardPage() {
             setPrinters(printersData);
           }
           setAgents(agentsData.agents || []);
+          if (settingsData) {
+            setShopSettings(settingsData);
+          }
           setIsLoadingOrders(false);
         }
       } catch (err: any) {
@@ -163,6 +180,38 @@ export default function OperatorDashboardPage() {
     }
   };
 
+  const handleToggleShopOpen = async () => {
+    if (!shopSettings) return;
+    try {
+      const updated = await updateShopSettings({ isOpen: !shopSettings.isOpen });
+      setShopSettings(updated);
+      setDispatchFeedback(`Campus Print Center status set to: ${updated.isOpen ? 'OPEN' : 'CLOSED'}`);
+    } catch (err: any) {
+      alert(err.message || 'Failed to toggle shop status');
+    }
+  };
+
+  const handleOpenSettingsModal = () => {
+    if (shopSettings) {
+      setSettingsForm({ ...shopSettings });
+    }
+    setIsSettingsModalOpen(true);
+  };
+
+  const handleSaveSettings = async () => {
+    setIsSavingSettings(true);
+    try {
+      const updated = await updateShopSettings(settingsForm);
+      setShopSettings(updated);
+      setIsSettingsModalOpen(false);
+      setDispatchFeedback('Shop settings, pricing rates, and paper stock updated successfully!');
+    } catch (err: any) {
+      alert(err.message || 'Failed to update shop settings');
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
+
   // Filtered queue
   const filteredOrders = orders.filter((order) => {
     const matchesFilter =
@@ -205,20 +254,69 @@ export default function OperatorDashboardPage() {
             </p>
           </div>
 
-          {/* Quick Dispatch Button */}
-          <button
-            type="button"
-            onClick={handleTestDispatch}
-            disabled={isDispatchingTest}
-            className="flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-md shrink-0"
-          >
-            {isDispatchingTest ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-            Send Test Print Job to Connected App
-          </button>
+          {/* Actions Bar */}
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            {/* Shop Status Toggle */}
+            <button
+              type="button"
+              onClick={handleToggleShopOpen}
+              className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all ${
+                shopSettings?.isOpen
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
+                  : 'bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20'
+              }`}
+              title="Click to toggle shop Open/Closed status"
+            >
+              <Store className="h-4 w-4" />
+              <span>Shop: {shopSettings?.isOpen ? 'OPEN' : 'CLOSED'}</span>
+            </button>
+
+            {/* Analytics Link */}
+            <Link
+              href="/operator/analytics"
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-surface-border bg-surface-card hover:bg-surface-elevated text-slate-200 hover:text-white text-xs font-semibold transition-all shadow-sm"
+              title="View revenue, paper consumption & privacy ledger"
+            >
+              <BarChart3 className="h-4 w-4 text-brand-400" />
+              <span>Analytics & Ledger</span>
+            </Link>
+
+            {/* Counter QR Poster Link */}
+            <Link
+              href="/operator/poster"
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-surface-border bg-surface-card hover:bg-surface-elevated text-slate-200 hover:text-white text-xs font-semibold transition-all shadow-sm"
+              title="Print counter QR standee for student onboarding"
+            >
+              <QrCode className="h-4 w-4 text-emerald-400" />
+              <span>Counter QR Standee</span>
+            </Link>
+
+            {/* Rates & Stock Settings */}
+            <button
+              type="button"
+              onClick={handleOpenSettingsModal}
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl border border-surface-border bg-surface-card hover:bg-surface-elevated text-slate-200 hover:text-white text-xs font-semibold transition-all shadow-sm"
+              title="Configure per-sheet rates and paper stock"
+            >
+              <Sliders className="h-4 w-4 text-blue-400" />
+              <span>Rates & Stock</span>
+            </button>
+
+            {/* Quick Dispatch Button */}
+            <button
+              type="button"
+              onClick={handleTestDispatch}
+              disabled={isDispatchingTest}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-500 text-white font-semibold text-xs sm:text-sm transition-all shadow-md shrink-0"
+            >
+              {isDispatchingTest ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
+              Test Dispatch
+            </button>
+          </div>
         </div>
 
         {/* Feedback Alert */}
@@ -586,6 +684,208 @@ export default function OperatorDashboardPage() {
         </div>
       </main>
       </SubscriptionGate>
+
+      {/* Shop Rates & Stock Settings Modal */}
+      {isSettingsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="bg-surface-card border border-surface-border rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400">
+                  <Sliders className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Campus Print Center Settings</h3>
+                  <p className="text-xs text-slate-400">Manage station status, per-sheet pricing rates, and paper stock</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSettingsModalOpen(false)}
+                className="text-slate-400 hover:text-white text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+              {/* Shop Status Toggle */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-surface-dark border border-surface-border">
+                <div>
+                  <div className="text-xs font-bold text-white">Station Open Status</div>
+                  <div className="text-[11px] text-slate-400">Control student order acceptance at this station</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSettingsForm((prev) => ({ ...prev, isOpen: !prev.isOpen }))
+                  }
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                    settingsForm.isOpen
+                      ? 'bg-emerald-500 text-white'
+                      : 'bg-rose-500 text-white'
+                  }`}
+                >
+                  {settingsForm.isOpen ? 'OPEN' : 'CLOSED'}
+                </button>
+              </div>
+
+              {/* Privacy Auto-Delete on Collection */}
+              <div className="flex items-start justify-between p-3 rounded-xl bg-surface-dark border border-surface-border gap-3">
+                <div>
+                  <div className="text-xs font-bold text-white">Auto-Delete PDF on Collection</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">
+                    Permanently purges physical PDF file blobs upon OTP collection for student privacy. Accounting and sheet aggregates are retained.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settingsForm.autoDeleteOnCollection ?? true}
+                  onChange={(e) =>
+                    setSettingsForm((prev) => ({
+                      ...prev,
+                      autoDeleteOnCollection: e.target.checked,
+                    }))
+                  }
+                  className="mt-1 h-4 w-4 rounded border-surface-border text-brand-600 focus:ring-brand-500"
+                />
+              </div>
+
+              {/* Rate Card Settings */}
+              <div className="p-3.5 rounded-xl bg-surface-dark border border-surface-border space-y-3">
+                <div className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                  Per-Sheet Pricing Rates
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">
+                      B&W Rate (₹/sheet)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0.5"
+                      value={settingsForm.bwRatePerSheet ?? 2.0}
+                      onChange={(e) =>
+                        setSettingsForm((prev) => ({
+                          ...prev,
+                          bwRatePerSheet: parseFloat(e.target.value) || 2.0,
+                        }))
+                      }
+                      className="w-full px-3 py-1.5 rounded-xl bg-surface-card border border-surface-border text-white text-xs font-mono focus:outline-none focus:border-brand-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">
+                      Color Rate (₹/sheet)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="1.0"
+                      value={settingsForm.colorRatePerSheet ?? 10.0}
+                      onChange={(e) =>
+                        setSettingsForm((prev) => ({
+                          ...prev,
+                          colorRatePerSheet: parseFloat(e.target.value) || 10.0,
+                        }))
+                      }
+                      className="w-full px-3 py-1.5 rounded-xl bg-surface-card border border-surface-border text-white text-xs font-mono focus:outline-none focus:border-brand-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">
+                      A3 Multiplier (x)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="1.0"
+                      value={settingsForm.a3Multiplier ?? 2.0}
+                      onChange={(e) =>
+                        setSettingsForm((prev) => ({
+                          ...prev,
+                          a3Multiplier: parseFloat(e.target.value) || 2.0,
+                        }))
+                      }
+                      className="w-full px-3 py-1.5 rounded-xl bg-surface-card border border-surface-border text-white text-xs font-mono focus:outline-none focus:border-brand-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Paper Tray Stock */}
+              <div className="p-3.5 rounded-xl bg-surface-dark border border-surface-border space-y-3">
+                <div className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                  Paper Inventory Stock
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">
+                      A4 Tray Stock (Sheets)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={settingsForm.paperStockA4 ?? 500}
+                      onChange={(e) =>
+                        setSettingsForm((prev) => ({
+                          ...prev,
+                          paperStockA4: parseInt(e.target.value) || 0,
+                        }))
+                      }
+                      className="w-full px-3 py-1.5 rounded-xl bg-surface-card border border-surface-border text-white text-xs font-mono focus:outline-none focus:border-brand-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-slate-400 block mb-1">
+                      A3 Tray Stock (Sheets)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={settingsForm.paperStockA3 ?? 100}
+                      onChange={(e) =>
+                        setSettingsForm((prev) => ({
+                          ...prev,
+                          paperStockA3: parseInt(e.target.value) || 0,
+                        }))
+                      }
+                      className="w-full px-3 py-1.5 rounded-xl bg-surface-card border border-surface-border text-white text-xs font-mono focus:outline-none focus:border-brand-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsSettingsModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-surface-border text-slate-300 hover:text-white text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSettings}
+                disabled={isSavingSettings}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-500 text-white text-xs font-semibold shadow disabled:opacity-50"
+              >
+                {isSavingSettings ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Check className="h-3.5 w-3.5" />
+                )}
+                Save Configuration
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import multipart from '@fastify/multipart';
 import { env } from './config/env.js';
 import { checkDatabaseConnection } from './db/prisma.js';
 import { initQueueSystem } from './services/queue.service.js';
+import { initCleanupWorker } from './workers/cleanup.worker.js';
 import { registerAgentWebSocket } from './ws/agent.socket.js';
 import { pricingRoutes } from './routes/pricing.routes.js';
 import { documentRoutes } from './routes/documents.routes.js';
@@ -13,6 +14,8 @@ import { paymentRoutes } from './routes/payments.routes.js';
 import { agentRoutes } from './routes/agent.routes.js';
 import { operatorRoutes } from './routes/operator.routes.js';
 import { subscriptionRoutes } from './routes/subscription.routes.js';
+import { analyticsRoutes } from './routes/analytics.routes.js';
+import { centersRoutes } from './routes/centers.routes.js';
 
 export async function buildServer() {
   const server = Fastify({
@@ -70,6 +73,8 @@ export async function buildServer() {
   await server.register(agentRoutes);
   await server.register(operatorRoutes);
   await server.register(subscriptionRoutes);
+  await server.register(analyticsRoutes);
+  await server.register(centersRoutes);
 
   return server;
 }
@@ -81,6 +86,7 @@ async function start() {
     // Check Database & Queue connections
     await checkDatabaseConnection();
     initQueueSystem();
+    await initCleanupWorker();
 
     // Listen on configured port & host
     await server.listen({

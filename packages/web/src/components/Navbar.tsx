@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Printer, ShoppingBag, ShieldCheck, Activity, Laptop, Settings, Sparkles, Lock, Crown } from 'lucide-react';
+import { Printer, ShoppingBag, ShieldCheck, Activity, Laptop, Settings, Sparkles, Lock, Crown, BarChart3 } from 'lucide-react';
 import { getConnectedAgents, getSubscriptionStatus } from '@/lib/api';
 import { SubscriptionStatusInfo } from '@/lib/types';
 
@@ -54,6 +54,7 @@ export function Navbar({ cartCount = 0, onOpenCart }: NavbarProps) {
   const navItems = [
     { label: 'Student Portal', href: '/student', icon: ShoppingBag },
     { label: 'Operator Workbench', href: '/operator', icon: Laptop },
+    { label: 'Analytics & Ledger', href: '/operator/analytics', icon: BarChart3 },
     { label: 'Admin Settings', href: '/admin', icon: Settings },
   ];
 

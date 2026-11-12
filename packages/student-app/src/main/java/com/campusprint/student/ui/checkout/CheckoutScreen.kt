@@ -21,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.campusprint.student.data.repository.CenterRepository
 import com.campusprint.student.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -45,6 +46,7 @@ fun CheckoutScreen(
     val subtotalRupees = itemTotalCents / 100.0
     val convenienceFeeRupees = 1.00
     val totalPayableRupees = subtotalRupees + convenienceFeeRupees
+    var studentPhone by remember { mutableStateOf(CenterRepository.getSavedPhone()) }
 
     LaunchedEffect(uiState) {
         if (uiState is CheckoutUiState.PaymentConfirmed) {
@@ -177,6 +179,64 @@ fun CheckoutScreen(
                 }
             }
 
+            // Mobile Number for WhatsApp / SMS Alert Card
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(SurfaceDark)
+                    .border(1.dp, SurfaceBorder, RoundedCornerShape(16.dp))
+                    .padding(16.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Phone,
+                            contentDescription = null,
+                            tint = BrandAccent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "Pickup Notification Alert (SMS/WhatsApp)",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                    }
+                    Text(
+                        text = "We will send an instant SMS / WhatsApp alert with your Collection OTP once your prints are ready at the counter.",
+                        style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, fontSize = 11.sp)
+                    )
+                    OutlinedTextField(
+                        value = studentPhone,
+                        onValueChange = { input ->
+                            studentPhone = input.filter { it.isDigit() }.take(10)
+                        },
+                        placeholder = {
+                            Text("10-digit mobile number", color = TextSecondary.copy(alpha = 0.5f), fontSize = 13.sp)
+                        },
+                        prefix = {
+                            Text("+91 ", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BrandPrimary,
+                            unfocusedBorderColor = SurfaceBorder,
+                            focusedTextColor = TextPrimary,
+                            unfocusedTextColor = TextPrimary,
+                            focusedContainerColor = SurfaceCard,
+                            unfocusedContainerColor = SurfaceCard
+                        )
+                    )
+                }
+            }
+
             // UPI Apps Accepted Notice
             Box(
                 modifier = Modifier
@@ -248,7 +308,8 @@ fun CheckoutScreen(
                                 paperSize = paperSize,
                                 duplexMode = duplexMode,
                                 copies = copies,
-                                pageCount = pageCount
+                                pageCount = pageCount,
+                                studentPhone = studentPhone
                             )
                         }
                     },
@@ -291,7 +352,8 @@ fun CheckoutScreen(
                                 paperSize = paperSize,
                                 duplexMode = duplexMode,
                                 copies = copies,
-                                pageCount = pageCount
+                                pageCount = pageCount,
+                                studentPhone = studentPhone
                             )
                         }
                         viewModel.simulatePaymentSuccess()

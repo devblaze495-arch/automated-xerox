@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -100,33 +101,45 @@ model User {
 }
 
 model PrintCenter {
-  id        String    @id @default(uuid()) @db.Uuid
-  name      String
-  slug      String    @unique
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id                     String    @id @default(uuid()) @db.Uuid
+  name                   String
+  slug                   String    @unique
+  isActive               Boolean   @default(true)
+  isOpen                 Boolean   @default(true)
+  autoDeleteOnCollection Boolean   @default(true)
+  bwRatePerSheet         Float     @default(2.0)
+  colorRatePerSheet      Float     @default(10.0)
+  a3Multiplier           Float     @default(2.0)
+  paperStockA4           Int       @default(500)
+  paperStockA3           Int       @default(100)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
-  orders    Order[]
-  printers  Printer[]
+  orders                 Order[]
+  printers               Printer[]
 
   @@map("print_centers")
 }
 
 model Document {
-  id             String      @id @default(uuid()) @db.Uuid
-  uploaderId     String      @db.Uuid
-  fileName       String
-  s3Key          String
-  fileSizeBytes  Int
-  pageCount      Int
-  fileHashSha256 String
-  purgeAt        DateTime?
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  id               String      @id @default(uuid()) @db.Uuid
+  uploaderId       String      @db.Uuid
+  fileName         String
+  originalFileName String?
+  s3Key            String
+  fileSizeBytes    Int
+  fileSize         Int?
+  pageCount        Int
+  fileHashSha256   String
+  purgeAt          DateTime?
+  isPurged         Boolean     @default(false)
+  purgedAt         DateTime?
+  filePath         String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
-  uploader       User        @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
-  orderItems     OrderItem[]
+  uploader         User        @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+  orderItems       OrderItem[]
 
   @@index([fileHashSha256])
   @@index([uploaderId])
@@ -140,10 +153,16 @@ model Order {
   status              OrderStatus @default(PAYMENT_PENDING)
   collectionOtp       String
   totalSheets         Int         @default(0)
+  colorSheets         Int         @default(0)
+  bwSheets            Int         @default(0)
+  isDuplex            Boolean     @default(false)
+  paperSize           PaperSize   @default(A4)
+  amountPaid          Float       @default(0.0)
   subtotalCents       Int         @default(0)
   convenienceFeeCents Int         @default(0)
   totalAmountCents    Int         @default(0)
   cancellationReason  String?
+  collectedAt         DateTime?
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
 

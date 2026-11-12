@@ -95,6 +95,8 @@ export class DocumentService {
           uploaderId,
           fileName: originalFileName,
           s3Key: data.s3Key,
+          filePath: data.storedFilePath,
+          isPurged: false,
           fileSizeBytes: data.fileSizeBytes,
           pageCount: data.pageCount,
           fileHashSha256: data.sha256Hash,

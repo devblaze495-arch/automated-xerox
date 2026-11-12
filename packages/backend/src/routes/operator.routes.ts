@@ -1,11 +1,14 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import crypto from 'crypto';
+import { prisma } from '../db/prisma.js';
 import { printerService } from '../services/printer.service.js';
 import { orderStore } from '../services/order.store.js';
 import { enqueuePrintDispatch } from '../services/queue.service.js';
 import { refundService } from '../services/refund.service.js';
+import { AnalyticsService } from '../services/analytics.service.js';
 import { env } from '../config/env.js';
+import { notificationService } from '../services/notification.service.js';
 
 const acceptOrderSchema = z.object({
   printerId: z.string().optional(),
@@ -140,6 +143,15 @@ export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
 
     const updated = orderStore.updateStatus(order.id, 'READY_FOR_COLLECTION');
 
+    // Fire-and-forget: notify student their order is ready
+    notificationService.sendOrderReadyAlert({
+      phone: order.studentPhone || '',
+      studentName: order.studentName || 'Student',
+      orderId: order.id,
+      pickupOtp: order.collectionOtp,
+      centerName: 'Central Library Print Station',
+    });
+
     return reply.send({
       success: true,
       message: 'Order marked ready for student pickup.',
@@ -177,10 +189,30 @@ export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
 
     const updated = orderStore.updateStatus(order.id, 'COLLECTED');
 
+    // Sync collected timestamp to DB
+    try {
+      await prisma.order.update({
+        where: { id: order.id },
+        data: {
+          status: 'COLLECTED',
+          collectedAt: new Date(),
+        },
+      });
+    } catch (_err) {}
+
+    // Auto-delete document files for privacy if configured
+    const purgedCount = await AnalyticsService.autoPurgeOrderDocuments(order.id);
+
+    // Deduct physical paper stock
+    await AnalyticsService.deductPaperStock(order.items);
+
     return reply.send({
       success: true,
-      message: 'Collection OTP verified successfully! Order handed over to student.',
+      message: `Collection OTP verified! Order handed over to student.${
+        purgedCount > 0 ? ` ${purgedCount} document file(s) permanently purged for privacy.` : ''
+      }`,
       order: updated,
+      purgedCount,
     });
   });
 

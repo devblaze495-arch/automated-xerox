@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.campusprint.student.data.api.ApiClient
 import com.campusprint.student.data.model.PricingData
 import com.campusprint.student.data.model.PricingRequest
+import com.campusprint.student.data.repository.CenterRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -120,28 +121,23 @@ class ConfigureViewModel : ViewModel() {
     }
 
     private fun calculateLocalFallback(state: ConfigureUiState): PricingData {
+        val center = CenterRepository.selectedCenter.value
         val sheetsPerCopy = if (state.duplexMode == "SIMPLEX") state.pageCount else Math.ceil(state.pageCount / 2.0).toInt()
         val totalSheets = sheetsPerCopy * state.copies
         val totalImpressions = state.pageCount * state.copies
 
-        val basePaperRate = if (state.paperSize == "A4") 50L else 120L
-        val tonerRate = if (state.paperSize == "A4") {
-            if (state.colorMode == "COLOR") 300L else 50L
-        } else {
-            if (state.colorMode == "COLOR") 600L else 100L
-        }
-
-        val basePaperCents = totalSheets * basePaperRate
-        val tonerCents = totalImpressions * tonerRate
-        val subtotalCents = basePaperCents + tonerCents
+        val baseRatePerSheetRupees = if (state.colorMode == "COLOR") center.colorRatePerSheet else center.bwRatePerSheet
+        val multiplier = if (state.paperSize == "A3") center.a3Multiplier else 1.0
+        val subtotalRupees = totalSheets * baseRatePerSheetRupees * multiplier
+        val subtotalCents = Math.round(subtotalRupees * 100).toLong()
 
         return PricingData(
             effectivePages = state.pageCount,
             sheetsPerCopy = sheetsPerCopy,
             totalSheets = totalSheets,
             totalImpressions = totalImpressions,
-            basePaperCents = basePaperCents,
-            tonerCents = tonerCents,
+            basePaperCents = subtotalCents / 2,
+            tonerCents = subtotalCents / 2,
             subtotalCents = subtotalCents,
             itemTotalCents = subtotalCents
         )

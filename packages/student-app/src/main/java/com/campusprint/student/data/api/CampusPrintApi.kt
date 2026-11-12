@@ -1,5 +1,6 @@
 package com.campusprint.student.data.api
 
+import com.campusprint.student.data.model.CentersResponse
 import com.campusprint.student.data.model.ConfirmPaymentResponse
 import com.campusprint.student.data.model.CreateOrderRequest
 import com.campusprint.student.data.model.CreateOrderResponse
@@ -43,5 +44,8 @@ interface CampusPrintApi {
     suspend fun getOrder(
         @Path("id") orderId: String
     ): Response<OrderDetailsResponse>
+
+    @GET("api/v1/centers/active")
+    suspend fun getActiveCenters(): Response<CentersResponse>
 }
 

@@ -10,6 +10,9 @@ import {
   EnrichedOperatorOrder,
   SubscriptionStatusInfo,
   SubscribeOrderResponse,
+  OperatorAnalyticsResponse,
+  ShopSettings,
+  PresetRange,
 } from './types';
 
 const API_BASE = typeof window !== 'undefined'
@@ -423,3 +426,101 @@ export async function simulateSubscriptionWebhook(
 
   return res.json();
 }
+
+/**
+ * Fetches comprehensive operator analytics, financial metrics, hourly volume, and ledger
+ */
+export async function getOperatorAnalytics(params?: {
+  preset?: PresetRange;
+  startDate?: string;
+  endDate?: string;
+  centerId?: string;
+}): Promise<OperatorAnalyticsResponse> {
+  const query = new URLSearchParams();
+  if (params?.preset) query.set('preset', params.preset);
+  if (params?.startDate) query.set('startDate', params.startDate);
+  if (params?.endDate) query.set('endDate', params.endDate);
+  if (params?.centerId) query.set('centerId', params.centerId);
+
+  const res = await fetch(`${API_BASE}/api/v1/operator/analytics?${query.toString()}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || err.error || 'Failed to load operator analytics');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+/**
+ * Downloads the itemized collection ledger as CSV
+ */
+export async function exportOperatorAnalyticsCsv(params?: {
+  preset?: PresetRange;
+  startDate?: string;
+  endDate?: string;
+  centerId?: string;
+}): Promise<Blob> {
+  const query = new URLSearchParams();
+  if (params?.preset) query.set('preset', params.preset);
+  if (params?.startDate) query.set('startDate', params.startDate);
+  if (params?.endDate) query.set('endDate', params.endDate);
+  if (params?.centerId) query.set('centerId', params.centerId);
+
+  const res = await fetch(`${API_BASE}/api/v1/operator/analytics/export?${query.toString()}`);
+  if (!res.ok) {
+    throw new Error('Failed to export CSV report');
+  }
+  return res.blob();
+}
+
+/**
+ * Manually purges a document file blob from storage for privacy
+ */
+export async function purgeDocument(documentId: string): Promise<{
+  success: boolean;
+  documentId: string;
+  isPurged: boolean;
+  purgedAt: string;
+  message: string;
+}> {
+  const res = await fetch(`${API_BASE}/api/v1/operator/documents/${encodeURIComponent(documentId)}/purge`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || err.error || 'Failed to purge document');
+  }
+  return res.json();
+}
+
+/**
+ * Retrieves shop open status, privacy auto-delete preference, per-sheet pricing rates, and paper stock
+ */
+export async function getShopSettings(centerId?: string): Promise<ShopSettings> {
+  const query = centerId ? `?centerId=${encodeURIComponent(centerId)}` : '';
+  const res = await fetch(`${API_BASE}/api/v1/operator/settings${query}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || err.error || 'Failed to load shop settings');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+/**
+ * Updates shop configuration (isOpen, autoDeleteOnCollection, rates, paper stock)
+ */
+export async function updateShopSettings(updates: Partial<ShopSettings>): Promise<ShopSettings> {
+  const res = await fetch(`${API_BASE}/api/v1/operator/settings`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || err.error || 'Failed to update shop settings');
+  }
+  const json = await res.json();
+  return json.data;
+}
+

@@ -1,8 +1,10 @@
 package com.campusprint.student
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import com.campusprint.student.data.repository.CenterRepository
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -35,6 +37,7 @@ import com.campusprint.student.ui.theme.TextSecondary
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleDeepLink(intent)
         setContent {
             CampusPrintTheme {
                 val navController = rememberNavController()
@@ -75,6 +78,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        handleDeepLink(intent)
+    }
+
+    private fun handleDeepLink(intent: Intent?) {
+        val dataUri = intent?.data ?: return
+        CenterRepository.selectFromQrCodeOrDeepLink(dataUri.toString())
     }
 }
 

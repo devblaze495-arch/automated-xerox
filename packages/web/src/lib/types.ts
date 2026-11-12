@@ -176,3 +176,81 @@ export interface SubscribeOrderResponse {
   clientOrderId: string;
 }
 
+export type PresetRange =
+  | 'today'
+  | 'yesterday'
+  | 'week'
+  | '15days'
+  | 'month'
+  | 'last_month'
+  | 'year'
+  | 'custom';
+
+export interface HourlyDistributionItem {
+  hour: number;
+  label: string;
+  orderCount: number;
+  sheetCount: number;
+  revenue: number;
+}
+
+export interface CollectionLedgerItem {
+  orderId: string;
+  createdAt: string;
+  collectedAt: string | null;
+  studentName: string;
+  studentPhone: string;
+  documentName: string;
+  documentId: string;
+  paperSize: 'A4' | 'A3';
+  duplexMode: string;
+  colorMode: 'BW' | 'COLOR';
+  copies: number;
+  totalSheets: number;
+  amountRupees: number;
+  status: string;
+  isPurged: boolean;
+  purgedAt: string | null;
+}
+
+export interface OperatorAnalyticsResponse {
+  dateRange: {
+    preset: PresetRange;
+    startDate: string;
+    endDate: string;
+  };
+  metrics: {
+    grossRevenueRupees: number;
+    totalOrdersCount: number;
+    completedOrdersCount: number;
+    cancelledOrdersCount: number;
+    pendingOrdersCount: number;
+    a4SimplexSheets: number;
+    a4DuplexSheets: number;
+    a3SimplexSheets: number;
+    a3DuplexSheets: number;
+    totalSheets: number;
+    colorImpressions: number;
+    bwImpressions: number;
+    paperStockA4: number;
+    paperStockA3: number;
+    lowPaperAlert: boolean;
+  };
+  hourlyDistribution: HourlyDistributionItem[];
+  ledger: CollectionLedgerItem[];
+}
+
+export interface ShopSettings {
+  id: string;
+  name: string;
+  slug: string;
+  isOpen: boolean;
+  autoDeleteOnCollection: boolean;
+  bwRatePerSheet: number;
+  colorRatePerSheet: number;
+  a3Multiplier: number;
+  paperStockA4: number;
+  paperStockA3: number;
+}
+
+

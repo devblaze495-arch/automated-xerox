@@ -5,6 +5,7 @@ import com.google.gson.annotations.SerializedName
 data class CreateOrderRequest(
     @SerializedName("studentId") val studentId: String = "00000000-0000-0000-0000-000000000001",
     @SerializedName("centerId") val centerId: String = "00000000-0000-0000-0000-000000000002",
+    @SerializedName("studentPhone") val studentPhone: String? = null,
     @SerializedName("items") val items: List<OrderItemRequest>
 )
 

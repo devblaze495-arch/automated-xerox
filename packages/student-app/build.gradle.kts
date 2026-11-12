@@ -1,7 +1,16 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
+}
+
+val localProps = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use { load(it) }
+    }
 }
 
 android {
@@ -21,13 +30,46 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val keyStoreFilePath = System.getenv("RELEASE_KEYSTORE_PATH")
+                ?: localProps.getProperty("release.keystore.path")
+
+            if (keyStoreFilePath != null && file(keyStoreFilePath).exists()) {
+                storeFile = file(keyStoreFilePath)
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                    ?: localProps.getProperty("release.keystore.password") ?: "campusprint"
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                    ?: localProps.getProperty("release.key.alias") ?: "campusprint"
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+                    ?: localProps.getProperty("release.key.password") ?: "campusprint"
+            } else {
+                // Automated fallback to debug keystore for automated CI/local release builds
+                val debugKeystore = file("${System.getProperty("user.home")}/.android/debug.keystore")
+                if (debugKeystore.exists()) {
+                    storeFile = debugKeystore
+                    storePassword = "android"
+                    keyAlias = "androiddebugkey"
+                    keyPassword = "android"
+                } else {
+                    initWith(getByName("debug"))
+                }
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+        debug {
+            isMinifyEnabled = false
         }
     }
 
@@ -51,6 +93,19 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+}
+
+tasks.matching { it.name == "assembleRelease" }.configureEach {
+    doLast {
+        val releaseDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
+        val candidateFiles = releaseDir.listFiles { _, name -> name.endsWith(".apk") }
+        val defaultApk = candidateFiles?.firstOrNull()
+        if (defaultApk != null && defaultApk.exists()) {
+            val targetApk = File(releaseDir, "CampusPrint-v1.0.apk")
+            defaultApk.copyTo(targetApk, overwrite = true)
+            println("✅ Generated standalone release APK: ${targetApk.absolutePath}")
         }
     }
 }
@@ -96,4 +151,3 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
-

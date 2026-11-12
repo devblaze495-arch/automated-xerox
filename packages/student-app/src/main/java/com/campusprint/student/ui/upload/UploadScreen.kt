@@ -24,6 +24,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.campusprint.student.data.model.PrintCenter
+import com.campusprint.student.data.repository.CenterRepository
 import com.campusprint.student.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -34,6 +36,14 @@ fun UploadScreen(
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
+    val selectedCenter by CenterRepository.selectedCenter.collectAsState()
+    val availableCenters by CenterRepository.availableCenters.collectAsState()
+    var showCenterDialog by remember { mutableStateOf(false) }
+    var showQrDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        CenterRepository.refreshCenters()
+    }
 
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -119,6 +129,154 @@ fun UploadScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                // Shop / Print Station Selector Banner
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(SurfaceDark)
+                        .border(1.dp, SurfaceBorder, RoundedCornerShape(18.dp))
+                        .padding(14.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(BrandPrimary.copy(alpha = 0.2f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Storefront,
+                                        contentDescription = null,
+                                        tint = BrandAccent,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Column {
+                                    Text(
+                                        text = selectedCenter.name,
+                                        style = MaterialTheme.typography.titleSmall.copy(
+                                            color = TextPrimary,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        maxLines = 1
+                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = selectedCenter.code,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                color = TextMuted,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 10.sp
+                                            )
+                                        )
+                                        Text(text = "•", color = TextMuted, fontSize = 10.sp)
+                                        Text(
+                                            text = if (selectedCenter.isOpen) "● OPEN" else "● CLOSED",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                color = if (selectedCenter.isOpen) StatusGreen else StatusRed,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 10.sp
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                IconButton(
+                                    onClick = { showQrDialog = true },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.QrCodeScanner,
+                                        contentDescription = "Scan QR",
+                                        tint = BrandAccent,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = { showCenterDialog = true },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(34.dp),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, SurfaceBorder)
+                                ) {
+                                    Text("Switch", fontSize = 11.sp, color = TextPrimary)
+                                }
+                            }
+                        }
+
+                        // Closed warning if applicable
+                        if (!selectedCenter.isOpen) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(StatusAmber.copy(alpha = 0.12f))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = "⚠️ This center is currently closed. Incoming print jobs will queue until reopened.",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = StatusAmber,
+                                        fontSize = 11.sp
+                                    )
+                                )
+                            }
+                        }
+
+                        // Rates Chip Bar
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(SurfaceCard)
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Text(
+                                    text = "B/W: ₹${String.format("%.2f", selectedCenter.bwRatePerSheet)}/sheet",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(SurfaceCard)
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Text(
+                                    text = "Color: ₹${String.format("%.2f", selectedCenter.colorRatePerSheet)}/sheet",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // Intro Card
                 Box(
                     modifier = Modifier
@@ -389,6 +547,28 @@ fun UploadScreen(
             }
         }
     }
+
+    if (showCenterDialog) {
+        CenterSelectorDialog(
+            centers = availableCenters,
+            selectedCenterId = selectedCenter.id,
+            onSelect = { center ->
+                CenterRepository.selectCenter(center)
+                showCenterDialog = false
+            },
+            onDismiss = { showCenterDialog = false }
+        )
+    }
+
+    if (showQrDialog) {
+        QrScannerDialog(
+            onCodeScanned = { rawCode ->
+                val matched = CenterRepository.selectFromQrCodeOrDeepLink(rawCode)
+                showQrDialog = false
+            },
+            onDismiss = { showQrDialog = false }
+        )
+    }
 }
 
 @Composable
@@ -418,3 +598,216 @@ private fun formatFileSize(bytes: Long): String {
     }
 }
 
+
+@Composable
+private fun CenterSelectorDialog(
+    centers: List<PrintCenter>,
+    selectedCenterId: String,
+    onSelect: (PrintCenter) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceDark,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Store,
+                    contentDescription = null,
+                    tint = BrandAccent,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = "Select Print Station",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Choose your campus collection counter:",
+                    style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary)
+                )
+
+                centers.forEach { center ->
+                    val isSelected = center.id == selectedCenterId
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isSelected) BrandPrimary.copy(alpha = 0.15f) else SurfaceCard)
+                            .border(
+                                width = 1.dp,
+                                color = if (isSelected) BrandPrimary else SurfaceBorder,
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            .clickable { onSelect(center) }
+                            .padding(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = center.name,
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            color = TextPrimary,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    )
+                                    Text(
+                                        text = if (center.isOpen) "● OPEN" else "● CLOSED",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            color = if (center.isOpen) StatusGreen else StatusRed,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 9.sp
+                                        )
+                                    )
+                                }
+                                Text(
+                                    text = center.location,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = TextMuted,
+                                        fontSize = 11.sp
+                                    )
+                                )
+                                Text(
+                                    text = "B/W: ₹${center.bwRatePerSheet} • Color: ₹${center.colorRatePerSheet}",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = BrandAccent,
+                                        fontSize = 10.sp
+                                    )
+                                )
+                            }
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Selected",
+                                    tint = BrandAccent,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = TextSecondary)
+            }
+        }
+    )
+}
+
+@Composable
+private fun QrScannerDialog(
+    onCodeScanned: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var rawInput by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceDark,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.QrCodeScanner,
+                    contentDescription = null,
+                    tint = BrandAccent,
+                    modifier = Modifier.size(22.dp)
+                )
+                Text(
+                    text = "Counter QR Deep Link",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Scan the QR standee on the counter with your camera, or paste/enter the station URL or code (e.g. CTR-CAMPUS-01):",
+                    style = MaterialTheme.typography.bodySmall.copy(color = TextSecondary, lineHeight = 17.sp)
+                )
+
+                OutlinedTextField(
+                    value = rawInput,
+                    onValueChange = { rawInput = it },
+                    placeholder = {
+                        Text("Paste QR URL or enter code", color = TextSecondary.copy(alpha = 0.5f), fontSize = 12.sp)
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = BrandPrimary,
+                        unfocusedBorderColor = SurfaceBorder,
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedContainerColor = SurfaceCard,
+                        unfocusedContainerColor = SurfaceCard
+                    )
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = rawInput == "CTR-CAMPUS-01",
+                        onClick = { rawInput = "CTR-CAMPUS-01" },
+                        label = { Text("CTR-CAMPUS-01", fontSize = 10.sp) }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (rawInput.isNotBlank()) {
+                        onCodeScanned(rawInput.trim())
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = BrandPrimary),
+                enabled = rawInput.isNotBlank()
+            ) {
+                Text("Select Station", color = Color.White)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = TextSecondary)
+            }
+        }
+    )
+}

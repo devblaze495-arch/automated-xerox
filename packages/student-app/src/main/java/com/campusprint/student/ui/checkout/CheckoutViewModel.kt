@@ -9,6 +9,7 @@ import com.campusprint.student.data.api.ApiClient
 import com.campusprint.student.data.model.CreateOrderRequest
 import com.campusprint.student.data.model.CreatedOrderData
 import com.campusprint.student.data.model.OrderItemRequest
+import com.campusprint.student.data.repository.CenterRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -38,13 +39,21 @@ class CheckoutViewModel : ViewModel() {
         paperSize: String,
         duplexMode: String,
         copies: Int,
-        pageCount: Int
+        pageCount: Int,
+        studentPhone: String = ""
     ) {
+        if (studentPhone.isNotBlank()) {
+            CenterRepository.savePhone(studentPhone)
+        }
+
         viewModelScope.launch {
             _uiState.value = CheckoutUiState.CreatingOrder
 
             try {
+                val selectedCenter = CenterRepository.selectedCenter.value
                 val request = CreateOrderRequest(
+                    centerId = selectedCenter.id,
+                    studentPhone = studentPhone.ifBlank { null },
                     items = listOf(
                         OrderItemRequest(
                             documentId = documentId,
