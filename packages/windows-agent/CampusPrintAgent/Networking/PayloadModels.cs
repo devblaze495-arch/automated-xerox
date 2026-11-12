@@ -85,6 +85,9 @@ public class ServerMessage
     [JsonPropertyName("centerId")]
     public string? CenterId { get; set; }
 
+    [JsonPropertyName("isPaused")]
+    public bool? IsPaused { get; set; }
+
     [JsonPropertyName("message")]
     public string? Message { get; set; }
 

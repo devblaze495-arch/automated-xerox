@@ -326,6 +326,38 @@ export async function rejectOperatorOrder(orderId: string, reason?: string): Pro
 }
 
 /**
+ * Toggles Walk-in Mode (Pauses or Resumes digital print spooler)
+ */
+export async function toggleSpoolerPause(centerId: string, paused: boolean): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/v1/operator/spooler/pause`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ centerId, paused }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to toggle spooler state');
+  }
+  return res.json();
+}
+
+/**
+ * Bumps an order to the top of the operator queue (isUrgent = true)
+ */
+export async function bumpOrderPriority(orderId: string, isUrgent = true): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/v1/operator/orders/${orderId}/priority`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ isUrgent }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to bump order priority');
+  }
+  return res.json();
+}
+
+/**
  * Lists all registered printers
  */
 export async function getPrinters(): Promise<PrinterDevice[]> {

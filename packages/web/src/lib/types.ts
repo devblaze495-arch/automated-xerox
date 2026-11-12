@@ -135,6 +135,8 @@ export interface EnrichedOperatorOrder {
   assignedPrinterName?: string | null;
   assignedPrinterPort?: string | null;
   requiresManualFlip?: boolean;
+  isUrgent?: boolean;
+  priorityScore?: number;
   queuePosition?: number;
   estimatedWaitMinutes?: number;
   createdAt: string;
@@ -245,6 +247,7 @@ export interface ShopSettings {
   name: string;
   slug: string;
   isOpen: boolean;
+  isSpoolerPaused?: boolean;
   autoDeleteOnCollection: boolean;
   bwRatePerSheet: number;
   colorRatePerSheet: number;

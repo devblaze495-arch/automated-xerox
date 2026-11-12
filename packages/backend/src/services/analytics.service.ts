@@ -80,6 +80,7 @@ export interface ShopSettings {
   name: string;
   slug: string;
   isOpen: boolean;
+  isSpoolerPaused: boolean;
   autoDeleteOnCollection: boolean;
   bwRatePerSheet: number;
   colorRatePerSheet: number;
@@ -93,6 +94,7 @@ export const DEFAULT_CENTER_SETTINGS: ShopSettings = {
   name: 'Central Library Print Station',
   slug: 'central-library',
   isOpen: true,
+  isSpoolerPaused: false,
   autoDeleteOnCollection: true,
   bwRatePerSheet: 2.0,
   colorRatePerSheet: 10.0,
@@ -204,6 +206,7 @@ export class AnalyticsService {
             name: DEFAULT_CENTER_SETTINGS.name,
             slug: DEFAULT_CENTER_SETTINGS.slug,
             isOpen: DEFAULT_CENTER_SETTINGS.isOpen,
+            isSpoolerPaused: DEFAULT_CENTER_SETTINGS.isSpoolerPaused,
             autoDeleteOnCollection: DEFAULT_CENTER_SETTINGS.autoDeleteOnCollection,
             bwRatePerSheet: DEFAULT_CENTER_SETTINGS.bwRatePerSheet,
             colorRatePerSheet: DEFAULT_CENTER_SETTINGS.colorRatePerSheet,
@@ -219,6 +222,7 @@ export class AnalyticsService {
         name: center.name,
         slug: center.slug,
         isOpen: center.isOpen,
+        isSpoolerPaused: (center as any).isSpoolerPaused ?? false,
         autoDeleteOnCollection: center.autoDeleteOnCollection,
         bwRatePerSheet: center.bwRatePerSheet,
         colorRatePerSheet: center.colorRatePerSheet,
@@ -252,6 +256,7 @@ export class AnalyticsService {
         where: { id: targetId },
         data: {
           isOpen: updates.isOpen,
+          isSpoolerPaused: updates.isSpoolerPaused,
           autoDeleteOnCollection: updates.autoDeleteOnCollection,
           bwRatePerSheet: updates.bwRatePerSheet,
           colorRatePerSheet: updates.colorRatePerSheet,
@@ -266,6 +271,7 @@ export class AnalyticsService {
         name: updated.name,
         slug: updated.slug,
         isOpen: updated.isOpen,
+        isSpoolerPaused: (updated as any).isSpoolerPaused ?? false,
         autoDeleteOnCollection: updated.autoDeleteOnCollection,
         bwRatePerSheet: updated.bwRatePerSheet,
         colorRatePerSheet: updated.colorRatePerSheet,

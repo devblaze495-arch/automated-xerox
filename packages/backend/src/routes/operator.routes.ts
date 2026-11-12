@@ -9,6 +9,7 @@ import { refundService } from '../services/refund.service.js';
 import { AnalyticsService } from '../services/analytics.service.js';
 import { env } from '../config/env.js';
 import { notificationService } from '../services/notification.service.js';
+import { agentRegistry } from '../ws/agent.registry.js';
 
 const acceptOrderSchema = z.object({
   printerId: z.string().optional(),
@@ -24,6 +25,15 @@ const collectOrderSchema = z.object({
 
 const togglePrinterSchema = z.object({
   isOnline: z.boolean().optional(),
+});
+
+const pauseSpoolerSchema = z.object({
+  centerId: z.string().optional(),
+  paused: z.boolean(),
+});
+
+const bumpPrioritySchema = z.object({
+  isUrgent: z.boolean().optional().default(true),
 });
 
 export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
@@ -43,9 +53,14 @@ export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
       };
     });
 
+    const isSpoolerPaused =
+      agentRegistry.isSpoolerPaused('00000000-0000-0000-0000-000000000002') ||
+      agentRegistry.isSpoolerPaused('CTR-CAMPUS-01');
+
     return reply.send({
       success: true,
       total: formattedOrders.length,
+      isSpoolerPaused,
       data: formattedOrders,
     });
   });
@@ -92,41 +107,53 @@ export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
       printerId: selectedPrinter?.id,
     });
 
-    // Dispatch items to the connected agent gateway
-    for (const item of order.items) {
-      const downloadFileName = item.documentName ? item.documentName.split('/').pop() : 'campus_job.pdf';
-      const downloadUrl = `${env.PUBLIC_BASE_URL}/api/v1/documents/download/${downloadFileName}`;
+    // Check if spooler is currently paused for walk-ins
+    const isPaused =
+      agentRegistry.isSpoolerPaused(order.centerId) ||
+      agentRegistry.isSpoolerPaused('00000000-0000-0000-0000-000000000002');
 
-      await enqueuePrintDispatch({
-        orderId: order.id,
-        orderItemId: item.id,
-        centerId: order.centerId,
-        payload: {
+    if (!isPaused) {
+      // Dispatch items to the connected agent gateway
+      for (const item of order.items) {
+        const downloadFileName = item.documentName ? item.documentName.split('/').pop() : 'campus_job.pdf';
+        const downloadUrl = `${env.PUBLIC_BASE_URL}/api/v1/documents/download/${downloadFileName}`;
+
+        await enqueuePrintDispatch({
+          orderId: order.id,
           orderItemId: item.id,
-          documentName: item.documentName,
-          totalPages: item.totalPages,
-          colorMode: item.colorMode,
-          duplexMode: item.duplexMode,
-          paperSize: item.paperSize,
-          copies: item.copies,
-          downloadUrl,
-          targetPrinter: selectedPrinter
-            ? {
+          centerId: order.centerId,
+          payload: {
+            orderItemId: item.id,
+            documentName: item.documentName,
+            totalPages: item.totalPages,
+            colorMode: item.colorMode,
+            duplexMode: item.duplexMode,
+            paperSize: item.paperSize,
+            copies: item.copies,
+            downloadUrl,
+            targetPrinter: selectedPrinter
+              ? {
                 id: selectedPrinter.id,
                 name: selectedPrinter.name,
                 portName: selectedPrinter.portName,
               }
-            : undefined,
-          requiresManualFlip: updatedOrder?.requiresManualFlip || false,
-          createdAt: Date.now(),
-        },
-      });
+              : undefined,
+            requiresManualFlip: updatedOrder?.requiresManualFlip || false,
+            createdAt: Date.now(),
+          },
+        });
+      }
+    } else {
+      console.log(`⏸️ Spooler paused for Center ${order.centerId}. Holding Order #${order.id.substring(0, 8)} in digital queue.`);
     }
 
     return reply.send({
       success: true,
-      message: `Order accepted and routed to ${selectedPrinter?.name || 'spooler'}. Dispatch event emitted.`,
+      message: isPaused
+        ? `Order accepted and safely held in queue (Spooler paused for walk-ins).`
+        : `Order accepted and routed to ${selectedPrinter?.name || 'spooler'}. Dispatch event emitted.`,
       order: updatedOrder,
+      isSpoolerPaused: isPaused,
     });
   });
 
@@ -198,7 +225,7 @@ export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
           collectedAt: new Date(),
         },
       });
-    } catch (_err) {}
+    } catch (_err) { }
 
     // Auto-delete document files for privacy if configured
     const purgedCount = await AnalyticsService.autoPurgeOrderDocuments(order.id);
@@ -208,9 +235,8 @@ export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
 
     return reply.send({
       success: true,
-      message: `Collection OTP verified! Order handed over to student.${
-        purgedCount > 0 ? ` ${purgedCount} document file(s) permanently purged for privacy.` : ''
-      }`,
+      message: `Collection OTP verified! Order handed over to student.${purgedCount > 0 ? ` ${purgedCount} document file(s) permanently purged for privacy.` : ''
+        }`,
       order: updated,
       purgedCount,
     });
@@ -279,6 +305,94 @@ export const operatorRoutes: FastifyPluginAsync = async (app: FastifyInstance) =
       success: true,
       message: `Printer ${updated.name} is now ${updated.isOnline ? 'ONLINE' : 'OFFLINE'}`,
       data: updated,
+    });
+  });
+
+  /**
+   * PATCH /api/v1/operator/spooler/pause
+   * Toggles walk-in mode: pauses or resumes the digital print spooler and broadcasts to agent
+   */
+  app.patch('/api/v1/operator/spooler/pause', async (req, reply) => {
+    const parseResult = pauseSpoolerSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        success: false,
+        error: 'Invalid pause payload',
+        details: parseResult.error.format(),
+      });
+    }
+
+    const { centerId = '00000000-0000-0000-0000-000000000002', paused } = parseResult.data;
+
+    // 1. Update in Database / AnalyticsService
+    await AnalyticsService.updateShopSettings(centerId, { isSpoolerPaused: paused }).catch(() => { });
+
+    // 2. Broadcast SPOOLER_STATE message over active agent WebSocket
+    const agentCount = agentRegistry.broadcastSpoolerState(centerId, paused);
+    agentRegistry.broadcastSpoolerState('CTR-CAMPUS-01', paused);
+
+    // 3. If unpaused, flush held queued orders to hardware spooler
+    let flushedCount = 0;
+    if (!paused) {
+      const pendingQueued = orderStore.getAllOrders().filter((o) => o.status === 'QUEUED');
+      for (const order of pendingQueued) {
+        for (const item of order.items) {
+          const downloadFileName = item.documentName ? item.documentName.split('/').pop() : 'campus_job.pdf';
+          const downloadUrl = `${env.PUBLIC_BASE_URL}/api/v1/documents/download/${downloadFileName}`;
+          await enqueuePrintDispatch({
+            orderId: order.id,
+            orderItemId: item.id,
+            centerId: order.centerId,
+            payload: {
+              orderItemId: item.id,
+              documentName: item.documentName,
+              totalPages: item.totalPages,
+              colorMode: item.colorMode,
+              duplexMode: item.duplexMode,
+              paperSize: item.paperSize,
+              copies: item.copies,
+              downloadUrl,
+              requiresManualFlip: order.requiresManualFlip || false,
+              createdAt: Date.now(),
+            },
+          });
+          flushedCount++;
+        }
+      }
+    }
+
+    return reply.send({
+      success: true,
+      paused,
+      message: paused
+        ? 'Auto-print spooler PAUSED (Walk-in Mode active). Digital jobs will be held.'
+        : `Auto-print spooler RESUMED. ${flushedCount} held job(s) dispatched to hardware spooler.`,
+      agentCount,
+      flushedCount,
+    });
+  });
+
+  /**
+   * PATCH /api/v1/operator/orders/:id/priority
+   * Sets isUrgent = true and priorityScore = Date.now() so order jumps to top of queue
+   */
+  app.patch('/api/v1/operator/orders/:id/priority', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parseResult = bumpPrioritySchema.safeParse(req.body || {});
+    const isUrgent = parseResult.success ? parseResult.data.isUrgent : true;
+    const priorityScore = Date.now();
+
+    const updated = orderStore.setOrderPriority(id, isUrgent, priorityScore);
+    if (!updated) {
+      return reply.status(404).send({ error: 'Order not found' });
+    }
+
+    return reply.send({
+      success: true,
+      message: isUrgent
+        ? `Order #${id.substring(0, 8)} bumped to top priority! It will print next.`
+        : `Priority restored to standard FIFO for Order #${id.substring(0, 8)}.`,
+      order: updated,
     });
   });
 };

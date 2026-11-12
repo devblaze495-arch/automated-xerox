@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -19,6 +20,10 @@ public class AgentWebSocketClient
 
     private ClientWebSocket? _webSocket;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private volatile bool _isSpoolerPaused = false;
+    private readonly ConcurrentQueue<DispatchedJobPayload> _heldJobs = new();
+
+    public bool IsSpoolerPaused => _isSpoolerPaused;
 
     public AgentWebSocketClient(
         IOptions<AgentOptions> options,
@@ -176,6 +181,28 @@ public class AgentWebSocketClient
             {
                 case "REGISTER_ACK":
                     _logger.LogInformation("✅ Gateway Handshake Acknowledged: {Message}", serverMessage.Message);
+                    if (serverMessage.IsPaused.HasValue)
+                    {
+                        _isSpoolerPaused = serverMessage.IsPaused.Value;
+                        if (_isSpoolerPaused)
+                        {
+                            _logger.LogWarning("Spooler paused by operator for walk-in priority. Holding digital queue.");
+                        }
+                    }
+                    break;
+
+                case "SPOOLER_STATE":
+                    var targetPaused = serverMessage.IsPaused ?? false;
+                    _isSpoolerPaused = targetPaused;
+                    if (_isSpoolerPaused)
+                    {
+                        _logger.LogWarning("Spooler paused by operator for walk-in priority. Holding digital queue.");
+                    }
+                    else
+                    {
+                        _logger.LogInformation("▶️ Spooler resumed by operator. Processing digital print queue ({Count} held jobs)...", _heldJobs.Count);
+                        _ = Task.Run(() => FlushHeldJobsAsync(cancellationToken), cancellationToken);
+                    }
                     break;
 
                 case "HEARTBEAT_ACK":
@@ -185,8 +212,17 @@ public class AgentWebSocketClient
                 case "JOB_DISPATCHED":
                     if (serverMessage.Payload != null)
                     {
-                        // Handle job in background task so socket read loop doesn't stall
-                        _ = Task.Run(() => HandleJobDispatchedAsync(serverMessage.Payload, cancellationToken), cancellationToken);
+                        if (_isSpoolerPaused)
+                        {
+                            _logger.LogWarning("Spooler paused by operator for walk-in priority. Holding digital queue. Held job: OrderItem [{OrderItemId}] ({DocumentName})",
+                                serverMessage.Payload.OrderItemId, serverMessage.Payload.DocumentName);
+                            _heldJobs.Enqueue(serverMessage.Payload);
+                        }
+                        else
+                        {
+                            // Handle job in background task so socket read loop doesn't stall
+                            _ = Task.Run(() => HandleJobDispatchedAsync(serverMessage.Payload, cancellationToken), cancellationToken);
+                        }
                     }
                     break;
 
@@ -205,8 +241,25 @@ public class AgentWebSocketClient
         }
     }
 
+    private async Task FlushHeldJobsAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested && !_isSpoolerPaused && _heldJobs.TryDequeue(out var job))
+        {
+            _logger.LogInformation("🚀 Flushing held job to hardware spooler: OrderItem [{OrderItemId}] ({DocumentName})", job.OrderItemId, job.DocumentName);
+            await HandleJobDispatchedAsync(job, cancellationToken);
+        }
+    }
+
     private async Task HandleJobDispatchedAsync(DispatchedJobPayload job, CancellationToken cancellationToken)
     {
+        if (_isSpoolerPaused)
+        {
+            _logger.LogWarning("Spooler paused by operator for walk-in priority. Holding digital queue. Held job: OrderItem [{OrderItemId}] ({DocumentName}).",
+                job.OrderItemId, job.DocumentName);
+            _heldJobs.Enqueue(job);
+            return;
+        }
+
         _logger.LogInformation("📥 [JOB_DISPATCHED] Received OrderItem [{OrderItemId}] ({DocumentName}, {Pages} pages, {Copies} copies, {Color}, {Duplex})",
             job.OrderItemId, job.DocumentName, job.TotalPages, job.Copies, job.ColorMode, job.DuplexMode);
 
@@ -233,6 +286,13 @@ public class AgentWebSocketClient
                 cancellationToken);
 
             // 4. Dispatch to Windows Spooler
+            if (_isSpoolerPaused)
+            {
+                _logger.LogWarning("Spooler paused by operator for walk-in priority. Holding digital queue before winspool.drv dispatch for OrderItem [{OrderItemId}].", job.OrderItemId);
+                _heldJobs.Enqueue(job);
+                return;
+            }
+
             await _dispatcher.DispatchJobAsync(job, downloadedPdfPath, _options.Printers, cancellationToken);
 
             // 5. Update status: COMPLETED

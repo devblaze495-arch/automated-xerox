@@ -16,6 +16,8 @@ import {
   getConnectedAgents,
   getShopSettings,
   updateShopSettings,
+  toggleSpoolerPause,
+  bumpOrderPriority,
 } from '@/lib/api';
 import { EnrichedOperatorOrder, PrinterDevice, ConnectedAgentInfo, ShopSettings } from '@/lib/types';
 import {
@@ -24,6 +26,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   Play,
+  Pause,
+  ArrowUpCircle,
   Check,
   RefreshCw,
   Send,
@@ -60,6 +64,11 @@ export default function OperatorDashboardPage() {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsForm, setSettingsForm] = useState<Partial<ShopSettings>>({});
+
+  // Auto-Print Pause (Walk-in Mode) & Priority Bump state
+  const [isTogglingPause, setIsTogglingPause] = useState(false);
+  const [bumpingOrderId, setBumpingOrderId] = useState<string | null>(null);
+  const isSpoolerPaused = shopSettings?.isSpoolerPaused ?? false;
 
   // Poll orders & agents every 3 seconds
   useEffect(() => {
@@ -212,6 +221,40 @@ export default function OperatorDashboardPage() {
     }
   };
 
+  const handleToggleSpoolerPause = async () => {
+    setIsTogglingPause(true);
+    try {
+      const nextState = !isSpoolerPaused;
+      const res = await toggleSpoolerPause('CTR-CAMPUS-01', nextState);
+      setShopSettings((prev) => (prev ? { ...prev, isSpoolerPaused: res.paused } : null));
+      setDispatchFeedback(
+        res.paused
+          ? '⏸️ Spooler PAUSED: Hardware print jobs held. Walk-in queue priority active.'
+          : `▶️ Spooler RESUMED: Hardware printing restarted. ${res.flushedCount ?? 0} held jobs dispatched!`
+      );
+      const freshOrders = await getOperatorOrders();
+      setOrders(freshOrders);
+    } catch (err: any) {
+      alert(err.message || 'Failed to toggle spooler pause status');
+    } finally {
+      setIsTogglingPause(false);
+    }
+  };
+
+  const handleBumpPriority = async (orderId: string) => {
+    setBumpingOrderId(orderId);
+    try {
+      await bumpOrderPriority(orderId, true);
+      setDispatchFeedback(`⚡ Order #${orderId.substring(0, 8)} bumped to TOP PRIORITY in print queue!`);
+      const freshOrders = await getOperatorOrders();
+      setOrders(freshOrders);
+    } catch (err: any) {
+      alert(err.message || 'Failed to bump order priority');
+    } finally {
+      setBumpingOrderId(null);
+    }
+  };
+
   // Filtered queue
   const filteredOrders = orders.filter((order) => {
     const matchesFilter =
@@ -269,6 +312,22 @@ export default function OperatorDashboardPage() {
             >
               <Store className="h-4 w-4" />
               <span>Shop: {shopSettings?.isOpen ? 'OPEN' : 'CLOSED'}</span>
+            </button>
+
+            {/* Auto-Print Spooler Pause (Walk-in Mode) */}
+            <button
+              type="button"
+              onClick={handleToggleSpoolerPause}
+              disabled={isTogglingPause}
+              className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all ${
+                isSpoolerPaused
+                  ? 'bg-amber-500/15 border-amber-500/50 text-amber-300 animate-pulse hover:bg-amber-500/25'
+                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
+              }`}
+              title="Toggle Auto-Print / Walk-in Mode"
+            >
+              {isSpoolerPaused ? <Pause className="h-4 w-4 text-amber-400" /> : <Play className="h-4 w-4" />}
+              <span>{isSpoolerPaused ? 'Auto-Print: PAUSED (Walk-in Mode)' : 'Auto-Print: RUNNING'}</span>
             </button>
 
             {/* Analytics Link */}
@@ -428,6 +487,26 @@ export default function OperatorDashboardPage() {
 
         {/* Live Queue Cards */}
         <div className="rounded-3xl border border-surface-border bg-surface-card p-6 shadow-xl space-y-6">
+          {/* Walk-in Mode / Spooler Paused Warning Banner */}
+          {isSpoolerPaused && (
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/40 text-amber-300 flex items-center justify-between gap-3 shadow-lg">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400 animate-bounce" />
+                <div className="text-xs">
+                  <strong className="text-amber-200">Auto-Print Paused (Walk-in Priority Mode)</strong> — Incoming student orders are safely held in the cloud queue while your physical printers serve walk-in customers. Click <button type="button" onClick={handleToggleSpoolerPause} className="underline font-bold text-amber-300 hover:text-white">Auto-Print: PAUSED</button> above to resume hardware printing.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleToggleSpoolerPause}
+                disabled={isTogglingPause}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs shrink-0 transition shadow"
+              >
+                Resume Auto-Print
+              </button>
+            </div>
+          )}
+
           {/* Controls: Search & Tabs */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
             {/* Filter Tabs */}
@@ -497,6 +576,12 @@ export default function OperatorDashboardPage() {
                           <span className="font-mono text-sm font-bold text-white">
                             #{order.id.substring(0, 8)}
                           </span>
+                          {order.isUrgent && (
+                            <span className="px-2 py-0.5 rounded bg-rose-500 text-white font-extrabold text-[10px] tracking-wider animate-pulse flex items-center gap-1 shadow-sm">
+                              <Zap className="h-3 w-3 fill-current" />
+                              URGENT
+                            </span>
+                          )}
                           <span className="text-slate-600">•</span>
                           <span className="text-xs font-semibold text-slate-300">
                             {order.studentName || 'Student'}
@@ -607,6 +692,22 @@ export default function OperatorDashboardPage() {
 
                       {/* Right Column: Operator Action Buttons */}
                       <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        {!order.isUrgent &&
+                          (order.status === 'PAYMENT_VERIFIED' ||
+                            order.status === 'WAITING_FOR_OPERATOR' ||
+                            order.status === 'QUEUED') && (
+                            <button
+                              type="button"
+                              onClick={() => handleBumpPriority(order.id)}
+                              disabled={bumpingOrderId === order.id}
+                              className="px-3 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+                              title="Bump this order to the top of the print queue"
+                            >
+                              <ArrowUpCircle className="h-3.5 w-3.5 text-amber-400" />
+                              {bumpingOrderId === order.id ? 'Bumping...' : 'Bump to Top'}
+                            </button>
+                          )}
+
                         {(order.status === 'PAYMENT_VERIFIED' ||
                           order.status === 'WAITING_FOR_OPERATOR' ||
                           order.status === 'QUEUED') && (

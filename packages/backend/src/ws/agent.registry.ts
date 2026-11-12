@@ -35,6 +35,59 @@ class AgentRegistry {
   // Map of centerId -> Set of connectionIds
   private centerToAgents = new Map<string, Set<string>>();
 
+  // Map of centerId -> isSpoolerPaused
+  private centerSpoolerPaused = new Map<string, boolean>();
+
+  public isSpoolerPaused(centerId: string): boolean {
+    return this.centerSpoolerPaused.get(centerId) ?? false;
+  }
+
+  public setSpoolerPaused(centerId: string, paused: boolean): void {
+    this.centerSpoolerPaused.set(centerId, paused);
+  }
+
+  /**
+   * Broadcasts SPOOLER_STATE message to all active agents for the specified center.
+   */
+  public broadcastSpoolerState(centerId: string, isPaused: boolean): number {
+    this.centerSpoolerPaused.set(centerId, isPaused);
+
+    const message = JSON.stringify({
+      type: 'SPOOLER_STATE',
+      isPaused,
+      timestamp: Date.now(),
+    });
+
+    let sent = 0;
+    const connectionIds = this.centerToAgents.get(centerId);
+    if (connectionIds) {
+      for (const connId of connectionIds) {
+        const agent = this.agents.get(connId);
+        if (agent && agent.socket.readyState === WebSocket.OPEN) {
+          try {
+            agent.socket.send(message);
+            sent++;
+          } catch (_err) {}
+        }
+      }
+    }
+
+    // Fallback broadcast to all active agents if center not specifically mapped
+    if (sent === 0) {
+      for (const agent of this.agents.values()) {
+        if (agent.socket.readyState === WebSocket.OPEN) {
+          try {
+            agent.socket.send(message);
+            sent++;
+          } catch (_err) {}
+        }
+      }
+    }
+
+    console.log(`📡 Broadcasted SPOOLER_STATE (isPaused=${isPaused}) to ${sent} connected agent(s) for Center [${centerId}]`);
+    return sent;
+  }
+
   register(connectionId: string, centerId: string, socket: WebSocket): ConnectedAgent {
     const agent: ConnectedAgent = {
       connectionId,
@@ -89,8 +142,14 @@ class AgentRegistry {
 
   /**
    * Dispatches a print job to an active agent registered for the specified center.
+   * If spooler is paused (walk-in mode), digital jobs are held in queue.
    */
   dispatchJobToCenter(centerId: string, payload: DispatchedJobPayload): boolean {
+    if (this.isSpoolerPaused(centerId)) {
+      console.log(`⏸️ Spooler paused (Walk-in Mode) for Center [${centerId}]. Holding OrderItem [${payload.orderItemId}].`);
+      return false;
+    }
+
     const connectionIds = this.centerToAgents.get(centerId);
     if (!connectionIds || connectionIds.size === 0) {
       // If no agent for this center, check if there's any active agent at all (for single-center testing)

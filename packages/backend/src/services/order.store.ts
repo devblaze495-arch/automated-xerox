@@ -37,6 +37,8 @@ export interface EnrichedOrder {
   assignedPrinterName?: string | null;
   assignedPrinterPort?: string | null;
   requiresManualFlip?: boolean;
+  isUrgent?: boolean;
+  priorityScore?: number;
   createdAt: Date;
   updatedAt: Date;
   items: EnrichedOrderItem[];
@@ -232,6 +234,8 @@ class OrderStore {
           convenienceFeeCents: dbo.convenienceFeeCents,
           totalAmountCents: dbo.totalAmountCents,
           cancellationReason: dbo.cancellationReason,
+          isUrgent: (dbo as any).isUrgent ?? false,
+          priorityScore: (dbo as any).priorityScore ?? 0,
           createdAt: dbo.createdAt,
           updatedAt: dbo.updatedAt,
           items: dbo.items.map((i) => ({
@@ -270,7 +274,62 @@ class OrderStore {
     for (const o of list) {
       this.enrichOrderPrinters(o);
     }
-    return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return list.sort((a, b) => {
+      // 1. Prioritize active orders ahead of terminal states
+      const isActiveA =
+        a.status === 'PAYMENT_VERIFIED' ||
+        a.status === 'WAITING_FOR_OPERATOR' ||
+        a.status === 'QUEUED' ||
+        a.status === 'PRINTING';
+      const isActiveB =
+        b.status === 'PAYMENT_VERIFIED' ||
+        b.status === 'WAITING_FOR_OPERATOR' ||
+        b.status === 'QUEUED' ||
+        b.status === 'PRINTING';
+
+      if (isActiveA && isActiveB) {
+        // Urgent orders first
+        if (!!b.isUrgent !== !!a.isUrgent) {
+          return b.isUrgent ? 1 : -1;
+        }
+        // Higher priorityScore first
+        if ((b.priorityScore || 0) !== (a.priorityScore || 0)) {
+          return (b.priorityScore || 0) - (a.priorityScore || 0);
+        }
+        // FIFO by creation time
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      }
+
+      if (isActiveA && !isActiveB) return -1;
+      if (!isActiveA && isActiveB) return 1;
+
+      // Terminal orders sorted newest first
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }
+
+  public setOrderPriority(orderId: string, isUrgent = true, priorityScore?: number): EnrichedOrder | null {
+    const order = this.getOrder(orderId);
+    if (!order) return null;
+
+    order.isUrgent = isUrgent;
+    order.priorityScore = priorityScore ?? (isUrgent ? Math.floor(Date.now() / 1000) : 0);
+    order.updatedAt = new Date();
+    this.orders.set(order.id, order);
+
+    try {
+      prisma.order
+        .update({
+          where: { id: order.id },
+          data: {
+            isUrgent: order.isUrgent,
+            priorityScore: order.priorityScore,
+          },
+        })
+        .catch(() => {});
+    } catch (_err) {}
+
+    return order;
   }
 
   public getOrder(id: string): EnrichedOrder | undefined {
@@ -378,12 +437,26 @@ class OrderStore {
       return { queuePosition: 1, estimatedWaitMinutes: 1, aheadJobsCount: 0, aheadSheets: 0 };
     }
 
-    // Count preceding active orders
-    const allActive = Array.from(this.orders.values()).filter(
-      (o) =>
-        (o.status === 'QUEUED' || o.status === 'PAYMENT_VERIFIED' || o.status === 'PRINTING') &&
-        new Date(o.createdAt).getTime() < new Date(targetOrder.createdAt).getTime()
-    );
+    // Count preceding active orders taking urgent priority score into account
+    const allActive = Array.from(this.orders.values()).filter((o) => {
+      if (o.id === targetOrder.id) return false;
+      const isActive = o.status === 'QUEUED' || o.status === 'PAYMENT_VERIFIED' || o.status === 'PRINTING';
+      if (!isActive) return false;
+
+      // If other is urgent and target is not, other is ahead
+      if (o.isUrgent && !targetOrder.isUrgent) return true;
+      if (!o.isUrgent && targetOrder.isUrgent) return false;
+
+      // If both urgent, compare priorityScore
+      if (o.isUrgent && targetOrder.isUrgent) {
+        if ((o.priorityScore || 0) !== (targetOrder.priorityScore || 0)) {
+          return (o.priorityScore || 0) > (targetOrder.priorityScore || 0);
+        }
+      }
+
+      // Otherwise earlier creation is ahead
+      return new Date(o.createdAt).getTime() < new Date(targetOrder.createdAt).getTime();
+    });
 
     const aheadJobsCount = allActive.length;
     const aheadSheets = allActive.reduce((sum, o) => sum + (o.totalSheets || 0), 0);

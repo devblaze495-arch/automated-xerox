@@ -106,6 +106,7 @@ model PrintCenter {
   slug                   String    @unique
   isActive               Boolean   @default(true)
   isOpen                 Boolean   @default(true)
+  isSpoolerPaused        Boolean   @default(false)
   autoDeleteOnCollection Boolean   @default(true)
   bwRatePerSheet         Float     @default(2.0)
   colorRatePerSheet      Float     @default(10.0)
@@ -156,6 +157,8 @@ model Order {
   colorSheets         Int         @default(0)
   bwSheets            Int         @default(0)
   isDuplex            Boolean     @default(false)
+  isUrgent            Boolean     @default(false)
+  priorityScore       Int         @default(0)
   paperSize           PaperSize   @default(A4)
   amountPaid          Float       @default(0.0)
   subtotalCents       Int         @default(0)

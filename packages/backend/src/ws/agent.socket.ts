@@ -34,11 +34,12 @@ export async function registerAgentWebSocket(app: FastifyInstance) {
     // 2. Register with Registry
     agentRegistry.register(connectionId, centerId, socket);
 
-    // Send welcome confirmation
+    // Send welcome confirmation including current spooler state
     socket.send(
       JSON.stringify({
         type: 'REGISTER_ACK',
         centerId,
+        isPaused: agentRegistry.isSpoolerPaused(centerId),
         message: 'Campus Print Gateway: Handshake verified. Connected to order queue.',
         timestamp: Date.now(),
       })
